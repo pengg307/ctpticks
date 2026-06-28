@@ -12,6 +12,12 @@ build/
 develop-eggs/
 dist/
 downloads/
+traderapi/
+utils/
+strategies/
+ctp_dll/
+core/
+config/
 eggs/
 .eggs/
 lib/

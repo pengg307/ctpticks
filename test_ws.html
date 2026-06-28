@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head><title>WebSocket 测试</title></head>
+<body>
+    <h1>WebSocket 连接测试</h1>
+    <div id="status">状态: 未连接</div>
+    <div id="data"></div>
+    <script>
+        const ws = new WebSocket("ws://localhost:8080/ws");
+        
+        ws.onopen = function() {
+            document.getElementById("status").innerHTML = "<span style='color:green'>状态: 已连接</span>";
+            console.log("WebSocket 已连接");
+        };
+        
+        ws.onmessage = function(e) {
+            const data = JSON.parse(e.data);
+            document.getElementById("data").innerHTML = "<pre>" + JSON.stringify(data, null, 2) + "</pre>";
+            console.log("收到数据:", data);
+        };
+        
+        ws.onerror = function(e) {
+            document.getElementById("status").innerHTML = "<span style='color:red'>状态: 错误</span>";
+            console.error("WebSocket 错误:", e);
+        };
+        
+        ws.onclose = function() {
+            document.getElementById("status").innerHTML = "<span style='color:red'>状态: 已断开</span>";
+            console.log("WebSocket 断开");
+        };
+    </script>
+</body>
+</html>

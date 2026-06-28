@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>CTP 订单流实时监控系统</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0a0e1a;
+            color: #e0e0e0;
+            font-family: 'Microsoft YaHei', monospace;
+            overflow: hidden;
+            height: 100vh;
+        }
+        .header {
+            height: 40px;
+            background: #1a1f2e;
+            display: flex;
+            align-items: center;
+            padding: 0 15px;
+            border-bottom: 1px solid #2a3040;
+        }
+        .header h1 {
+            font-size: 16px;
+            color: #00d4aa;
+            margin-right: 30px;
+        }
+        .header .status {
+            font-size: 12px;
+            color: #888;
+        }
+        .header .status.connected { color: #00d4aa; }
+        .header .btn-connect {
+            margin-left: auto;
+            padding: 4px 16px;
+            background: #00d4aa;
+            color: #000;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .header .btn-connect:hover { background: #00b894; }
+        .header .btn-connect:disabled { background: #666; cursor: not-allowed; }
+        .main-container {
+            display: flex;
+            height: calc(100vh - 40px);
+        }
+        .left-section {
+            display: flex;
+            flex: 1;
+        }
+        .column {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #1a1f2e;
+        }
+        .chart-window {
+            flex: 1;
+            border-bottom: 1px solid #1a1f2e;
+            position: relative;
+            cursor: pointer;
+            transition: box-shadow 0.2s;
+        }
+        .chart-window:hover { box-shadow: inset 0 0 20px rgba(0,212,170,0.1); }
+        .chart-window.active { box-shadow: inset 0 0 0 2px #00d4aa; }
+        .chart-window .title-bar {
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 28px;
+            background: rgba(26,31,46,0.95);
+            display: flex;
+            align-items: center;
+            padding: 0 8px;
+            z-index: 10;
+            font-size: 12px;
+        }
+        .chart-window .title-bar .inst-name {
+            color: #fff;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .chart-window .title-bar .price {
+            color: #00d4aa;
+            margin-right: 10px;
+        }
+        .chart-window .title-bar .price.down { color: #ff4757; }
+        .chart-window .title-bar .period-selector {
+            margin-left: auto;
+            display: flex;
+            gap: 4px;
+        }
+        .chart-window .title-bar .period-btn {
+            background: #2a3040;
+            border: 1px solid #3a4050;
+            color: #888;
+            padding: 2px 6px;
+            font-size: 10px;
+            cursor: pointer;
+            border-radius: 3px;
+        }
+        .chart-window .title-bar .period-btn:hover,
+        .chart-window .title-bar .period-btn.active {
+            background: #00d4aa;
+            color: #000;
+            border-color: #00d4aa;
+        }
+        .chart-container {
+            width: 100%;
+            height: 100%;
+            padding-top: 28px;
+        }
+        .right-section {
+            width: 380px;
+            background: #0f1420;
+            border-left: 2px solid #1a1f2e;
+            display: flex;
+            flex-direction: column;
+        }
+        .right-header {
+            height: 40px;
+            background: #1a1f2e;
+            display: flex;
+            align-items: center;
+            padding: 0 12px;
+            border-bottom: 1px solid #2a3040;
+        }
+        .right-header .inst-title {
+            font-size: 14px;
+            color: #00d4aa;
+            font-weight: bold;
+        }
+        .right-header .inst-code {
+            font-size: 11px;
+            color: #888;
+            margin-left: 8px;
+        }
+        .orderflow-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+        .orderflow-item {
+            display: flex;
+            align-items: center;
+            padding: 4px 6px;
+            margin-bottom: 2px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-family: monospace;
+        }
+        .orderflow-item.buy { background: rgba(0,212,170,0.08); }
+        .orderflow-item.sell { background: rgba(255,71,87,0.08); }
+        .orderflow-item.mix { background: rgba(136,136,136,0.05); }
+        .orderflow-item .time { width: 60px; color: #666; }
+        .orderflow-item .price { width: 70px; text-align: right; }
+        .orderflow-item .vol { width: 40px; text-align: center; }
+        .orderflow-item .buy-v { width: 45px; text-align: right; color: #00d4aa; }
+        .orderflow-item .sell-v { width: 45px; text-align: right; color: #ff4757; }
+        .orderflow-item .delta { width: 50px; text-align: right; font-weight: bold; }
+        .orderflow-item .dir {
+            width: 30px;
+            text-align: center;
+            font-size: 10px;
+            border-radius: 3px;
+            padding: 1px 0;
+        }
+        .orderflow-item.buy .dir { background: #00d4aa; color: #000; }
+        .orderflow-item.sell .dir { background: #ff4757; color: #fff; }
+        .orderflow-item.mix .dir { background: #666; color: #fff; }
+        .stats-bar {
+            height: 60px;
+            background: #1a1f2e;
+            border-top: 1px solid #2a3040;
+            padding: 8px 12px;
+            font-size: 12px;
+        }
+        .stats-bar .row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 4px;
+        }
+        .stats-bar .label { color: #888; }
+        .stats-bar .value { color: #fff; font-weight: bold; }
+        .stats-bar .value.buy { color: #00d4aa; }
+        .stats-bar .value.sell { color: #ff4757; }
+        .debug-panel { display: none; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0a0e1a; }
+        ::-webkit-scrollbar-thumb { background: #2a3040; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>CTP 订单流实时监控系统</h1>
+        <span class="status" id="conn-status">未连接</span>
+        <button class="btn-connect" id="btnConnect">连接WS</button>
+    </div>
+    <div class="main-container">
+        <div class="left-section" id="left-section"></div>
+        <div class="right-section">
+            <div class="right-header">
+                <span class="inst-title" id="right-title">--</span>
+                <span class="inst-code" id="right-code">--</span>
+            </div>
+            <div class="orderflow-list" id="orderflow-list">
+                <div style="text-align:center; color:#666; padding-top:50px;">点击"连接WS"开始接收数据</div>
+            </div>
+            <div class="stats-bar">
+                <div class="row">
+                    <span class="label">最近100笔 主动买:</span>
+                    <span class="value buy" id="stat-buy">0</span>
+                </div>
+                <div class="row">
+                    <span class="label">最近100笔 主动卖:</span>
+                    <span class="value sell" id="stat-sell">0</span>
+                </div>
+                <div class="row">
+                    <span class="label">净Δ (买-卖):</span>
+                    <span class="value" id="stat-delta">0</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="debug-panel" id="debugPanel"></div>
+
+<script>
+// ========== 后端注入的配置（自动同步 instruments.py）==========
+const INSTRUMENTS = $INSTRUMENTS_JSON;
+const INSTRUMENT_NAMES = $INSTRUMENT_NAMES_JSON;
+
+const SERVER_HOST = "127.0.0.1:8080";
+const WS_URL = "ws://" + SERVER_HOST + "/ws";
+const API_BASE = "http://" + SERVER_HOST;
+const PERIODS = ["1m", "5m", "15m", "1h"];
+
+const windowPeriods = {};
+INSTRUMENTS.forEach(function(inst, i) { windowPeriods[i] = "1m"; });
+
+let selectedWindow = 0;
+const charts = {};
+let ws = null;
+let isConnected = false;
+let userSelectedInst = null;
+const orderflowMarks = {};
+
+function initLayout() {
+    const leftSection = document.getElementById('left-section');
+    if (!leftSection) return;
+
+    const col1 = document.createElement('div');
+    col1.className = 'column';
+    const col2 = document.createElement('div');
+    col2.className = 'column';
+
+    INSTRUMENTS.forEach(function(inst, i) {
+        const col = i < 3 ? col1 : col2;
+        const win = document.createElement('div');
+        win.className = 'chart-window' + (i === 0 ? ' active' : '');
+        win.id = 'window-' + i;
+        win.dataset.index = i;
+        win.dataset.inst = inst;
+
+        var periodButtons = '';
+        PERIODS.forEach(function(p) {
+            var activeClass = p === '1m' ? 'active' : '';
+            periodButtons += '<button class="period-btn ' + activeClass + '" data-period="' + p + '">' + p + '</button>';
+        });
+
+        win.innerHTML = '<div class="title-bar"><span class="inst-name">' + INSTRUMENT_NAMES[inst] + '</span><span class="price" id="price-' + i + '">--</span><div class="period-selector">' + periodButtons + '</div></div><div class="chart-container" id="chart-' + i + '"></div>';
+
+        win.addEventListener('click', function(e) {
+            if (e.target.classList.contains('period-btn')) return;
+            selectWindow(i);
+        });
+        
+        win.querySelectorAll('.period-btn').forEach(function(btn) {
+            btn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                changePeriod(i, btn.dataset.period);
+            });
+        });
+        
+        col.appendChild(win);
+    });
+
+    leftSection.appendChild(col1);
+    leftSection.appendChild(col2);
+
+    setTimeout(function() {
+        INSTRUMENTS.forEach(function(inst, i) {
+            initChart(i, inst);
+        });
+    }, 300);
+}
+
+function initChart(windowIdx, inst) {
+    var container = document.getElementById('chart-' + windowIdx);
+    if (!container) return;
+    try {
+        var chart = echarts.init(container, 'dark');
+        charts[windowIdx] = chart;
+        fetchKlineData(inst, windowPeriods[windowIdx], windowIdx);
+        window.addEventListener('resize', function() { chart.resize(); });
+    } catch (e) {
+        console.error("ECharts init error:", e);
+    }
+}
+
+function fetchKlineData(inst, period, windowIdx) {
+    var url = API_BASE + '/api/klines?inst=' + inst + '&period=' + period;
+    fetch(url)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            updateChart(windowIdx, inst, period, data);
+        })
+        .catch(function(err) {
+            console.error("Kline fetch error:", err);
+        });
+}
+
+function generateOrderflowMarks(klines, inst) {
+    var marks = [];
+    var flows = orderflowMarks[inst] || [];
+    var flowByTime = {};
+    flows.forEach(function(f) {
+        var timeKey = f.time ? f.time.substring(0, 5) : '';
+        if (!flowByTime[timeKey]) flowByTime[timeKey] = { buy: 0, sell: 0, total: 0 };
+        flowByTime[timeKey].buy += f.buy_vol || 0;
+        flowByTime[timeKey].sell += f.sell_vol || 0;
+        flowByTime[timeKey].total += f.total_vol || 0;
+    });
+
+    klines.forEach(function(k, idx) {
+        var timeKey = k.time;
+        var flow = flowByTime[timeKey];
+        if (!flow || flow.total === 0) return;
+        var isBuy = flow.buy > flow.sell;
+        var ratio = flow.total > 0 ? Math.round((isBuy ? flow.buy : flow.sell) / flow.total * 100) : 50;
+        var yPos = isBuy ? k.high : k.low;
+        var offset = isBuy ? k.high * 0.001 : -k.high * 0.001;
+        
+        marks.push({
+            name: (isBuy ? '▲' : '▼') + ratio + '%',
+            coord: [idx, yPos + offset],
+            value: flow.total,
+            itemStyle: { color: isBuy ? '#00d4aa' : '#ff4757' },
+            label: {
+                show: true,
+                position: isBuy ? 'top' : 'bottom',
+                formatter: function(p) { return p.name + '\n' + p.value; },
+                fontSize: 9,
+                color: isBuy ? '#00d4aa' : '#ff4757'
+            }
+        });
+    });
+    return marks;
+}
+
+function updateChart(windowIdx, inst, period, data) {
+    var chart = charts[windowIdx];
+    if (!chart) return;
+
+    var klines = data.klines || [];
+    var macd = data.macd || { dif: [], dea: [], macd: [] };
+
+    if (klines.length === 0) {
+        chart.setOption({
+            backgroundColor: 'transparent',
+            title: { text: '暂无K线', left: 'center', top: 'center', textStyle: { color: '#666' } }
+        }, true);
+        return;
+    }
+
+    var dates = klines.map(function(k) { return k.time; });
+    var candleData = klines.map(function(k) { return [k.open, k.close, k.low, k.high]; });
+    var volumes = klines.map(function(k) {
+        return { value: k.volume, itemStyle: { color: k.close >= k.open ? '#00d4aa' : '#ff4757' } };
+    });
+
+    var markPoints = generateOrderflowMarks(klines, inst);
+
+    var option = {
+        backgroundColor: 'transparent',
+        animation: false,
+        grid: [
+            { left: '8%', right: '4%', top: '12%', height: '48%' },
+            { left: '8%', right: '4%', top: '64%', height: '16%' },
+            { left: '8%', right: '4%', top: '82%', height: '14%' }
+        ],
+        xAxis: [
+            { type: 'category', data: dates, gridIndex: 0, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { color: '#666', fontSize: 9 } },
+            { type: 'category', data: dates, gridIndex: 1, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { show: false } },
+            { type: 'category', data: dates, gridIndex: 2, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { color: '#666', fontSize: 9 } }
+        ],
+        yAxis: [
+            { scale: true, gridIndex: 0, splitLine: { lineStyle: { color: '#1a1f2e' } }, axisLabel: { color: '#888', fontSize: 9 } },
+            { scale: true, gridIndex: 1, splitLine: { show: false }, axisLabel: { show: false } },
+            { scale: true, gridIndex: 2, splitLine: { lineStyle: { color: '#1a1f2e' } }, axisLabel: { color: '#888', fontSize: 9 } }
+        ],
+        dataZoom: [{ type: 'inside', xAxisIndex: [0,1,2], start: 60, end: 100 }],
+        series: [
+            {
+                name: 'K线', type: 'candlestick',
+                xAxisIndex: 0, yAxisIndex: 0, data: candleData,
+                itemStyle: {
+                    color: '#00d4aa', color0: '#ff4757',
+                    borderColor: '#00d4aa', borderColor0: '#ff4757'
+                },
+                markPoint: {
+                    symbol: 'circle',
+                    symbolSize: 8,
+                    data: markPoints,
+                    animation: false
+                }
+            },
+            {
+                name: '成交量', type: 'bar',
+                xAxisIndex: 1, yAxisIndex: 1, data: volumes, barWidth: '60%'
+            },
+            {
+                name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2,
+                data: macd.dif || [], smooth: true, showSymbol: false,
+                lineStyle: { color: '#f1c40f', width: 1 }
+            },
+            {
+                name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2,
+                data: macd.dea || [], smooth: true, showSymbol: false,
+                lineStyle: { color: '#3498db', width: 1 }
+            },
+            {
+                name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2,
+                data: (macd.macd || []).map(function(v) {
+                    return { value: v, itemStyle: { color: v >= 0 ? '#00d4aa' : '#ff4757' } };
+                }),
+                barWidth: '50%'
+            }
+        ],
+        tooltip: {
+            trigger: 'axis',
+            backgroundColor: 'rgba(10,14,26,0.95)',
+            borderColor: '#2a3040',
+            textStyle: { color: '#e0e0e0', fontSize: 11 }
+        }
+    };
+
+    chart.setOption(option, true);
+}
+
+function changePeriod(windowIdx, period) {
+    windowPeriods[windowIdx] = period;
+    var win = document.getElementById('window-' + windowIdx);
+    win.querySelectorAll('.period-btn').forEach(function(btn) {
+        btn.classList.toggle('active', btn.dataset.period === period);
+    });
+    var inst = INSTRUMENTS[windowIdx];
+    fetchKlineData(inst, period, windowIdx);
+}
+
+function selectWindow(idx) {
+    selectedWindow = idx;
+    userSelectedInst = INSTRUMENTS[idx];
+    document.querySelectorAll('.chart-window').forEach(function(w, i) {
+        w.classList.toggle('active', i === idx);
+    });
+    var inst = INSTRUMENTS[idx];
+    document.getElementById('right-title').textContent = INSTRUMENT_NAMES[inst];
+    document.getElementById('right-code').textContent = inst;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({action: 'select', instrument: inst}));
+    }
+}
+
+function updateOrderflow(items) {
+    var list = document.getElementById('orderflow-list');
+    if (!items || items.length === 0) {
+        list.innerHTML = '<div style="text-align:center; color:#666; padding-top:50px;">暂无数据</div>';
+        return;
+    }
+    var buyTotal = 0, sellTotal = 0, deltaTotal = 0;
+    var html = items.map(function(item) {
+        var cls = item.aggressor === 'BUY' ? 'buy' : item.aggressor === 'SELL' ? 'sell' : 'mix';
+        var dirText = item.aggressor === 'BUY' ? '买' : item.aggressor === 'SELL' ? '卖' : '混';
+        buyTotal += item.buy_vol || 0;
+        sellTotal += item.sell_vol || 0;
+        deltaTotal += item.delta || 0;
+        return '<div class="orderflow-item ' + cls + '"><span class="time">' + (item.time || '--') + '</span><span class="price">' + (item.price || 0).toFixed(2) + '</span><span class="vol">' + (item.total_vol || 0) + '</span><span class="buy-v">' + (item.buy_vol || 0) + '</span><span class="sell-v">' + (item.sell_vol || 0) + '</span><span class="delta" style="color:' + ((item.delta||0)>=0?'#00d4aa':'#ff4757') + '">' + ((item.delta||0)>=0?'+':'') + (item.delta||0) + '</span><span class="dir">' + dirText + '</span></div>';
+    }).join('');
+    list.innerHTML = html;
+    list.scrollTop = 0;
+    document.getElementById('stat-buy').textContent = buyTotal;
+    document.getElementById('stat-sell').textContent = sellTotal;
+    var deltaEl = document.getElementById('stat-delta');
+    deltaEl.textContent = (deltaTotal >= 0 ? '+' : '') + deltaTotal;
+    deltaEl.style.color = deltaTotal >= 0 ? '#00d4aa' : '#ff4757';
+}
+
+function connectWS() {
+    if (isConnected) return;
+    document.getElementById('conn-status').textContent = "连接中...";
+    document.getElementById('btnConnect').disabled = true;
+
+    try {
+        ws = new WebSocket(WS_URL);
+        ws.onopen = function() {
+            document.getElementById('conn-status').textContent = "已连接";
+            document.getElementById('conn-status').classList.add('connected');
+            isConnected = true;
+            document.getElementById('btnConnect').textContent = "已连接";
+        };
+        ws.onmessage = function(event) {
+            try {
+                var data = JSON.parse(event.data);
+                if (data.type === 'update') {
+                    if (data.instruments) {
+                        for (var inst in data.instruments) {
+                            var info = data.instruments[inst];
+                            var idx = INSTRUMENTS.indexOf(inst);
+                            if (idx >= 0) {
+                                var priceEl = document.getElementById('price-' + idx);
+                                if (priceEl && info.last_price) {
+                                    priceEl.textContent = info.last_price.toFixed(2);
+                                    priceEl.classList.toggle('down', info.delta < 0);
+                                }
+                            }
+                        }
+                    }
+                    if (data.selected_orderflow) {
+                        var selInst = data.selected_inst || INSTRUMENTS[0];
+                        if (!orderflowMarks[selInst]) orderflowMarks[selInst] = [];
+                        data.selected_orderflow.forEach(function(f) {
+                            orderflowMarks[selInst].push(f);
+                        });
+                        if (orderflowMarks[selInst].length > 500) {
+                            orderflowMarks[selInst] = orderflowMarks[selInst].slice(-500);
+                        }
+                        if (!userSelectedInst) {
+                            updateOrderflow(data.selected_orderflow);
+                            if (data.selected_name) {
+                                document.getElementById('right-title').textContent = data.selected_name;
+                                document.getElementById('right-code').textContent = data.selected_inst || '--';
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error("WS parse error:", e);
+            }
+        };
+        ws.onerror = function() {
+            document.getElementById('conn-status').textContent = "错误";
+            document.getElementById('btnConnect').disabled = false;
+            document.getElementById('btnConnect').textContent = "重试连接";
+        };
+        ws.onclose = function() {
+            document.getElementById('conn-status').textContent = "断开";
+            document.getElementById('conn-status').classList.remove('connected');
+            isConnected = false;
+            userSelectedInst = null;
+            document.getElementById('btnConnect').disabled = false;
+            document.getElementById('btnConnect').textContent = "连接WS";
+        };
+    } catch (e) {
+        console.error("WS connect error:", e);
+        document.getElementById('btnConnect').disabled = false;
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    var btn = document.getElementById('btnConnect');
+    if (btn) btn.addEventListener('click', connectWS);
+    initLayout();
+});
+</script>
+</body>
+</html>

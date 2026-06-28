@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket 测试</title>
+    <style>
+        body { font-family: Arial; padding: 20px; }
+        #status { padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .connected { background: #d4edda; color: #155724; }
+        .disconnected { background: #f8d7da; color: #721c24; }
+        .connecting { background: #fff3cd; color: #856404; }
+        pre { background: #f5f5f5; padding: 10px; border-radius: 5px; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>WebSocket 连接测试</h1>
+    
+    <div id="status" class="disconnected">状态: 未连接</div>
+    
+    <button onclick="connect()">连接</button>
+    <button onclick="disconnect()">断开</button>
+    <button onclick="sendTest()">发送测试消息</button>
+    
+    <h3>接收到的数据:</h3>
+    <div id="data"></div>
+    
+    <h3>日志:</h3>
+    <div id="log"></div>
+    
+    <script>
+        let ws = null;
+        
+        function log(msg, color = '#333') {
+            const logDiv = document.getElementById('log');
+            const time = new Date().toLocaleTimeString();
+            logDiv.innerHTML = `<div style="color:${color}">[${time}] ${msg}</div>` + logDiv.innerHTML;
+            console.log(msg);
+        }
+        
+        function connect() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                log('已经连接了', 'orange');
+                return;
+            }
+            
+            // Use relative URL (same host/port as the HTML page)
+            //const wsUrl = `ws://${window.location.host}/ws`;
+            const wsUrl = `ws://127.0.0.1:8080/ws`;
+            log(`正在连接到: ${wsUrl}`, 'blue');
+            
+            document.getElementById('status').className = 'connecting';
+            document.getElementById('status').textContent = '状态: 连接中...';
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = function() {
+                document.getElementById('status').className = 'connected';
+                document.getElementById('status').textContent = '状态: 已连接 ✓';
+                log('WebSocket 连接成功!', 'green');
+            };
+            
+            ws.onmessage = function(e) {
+                log(`收到消息: ${e.data.substring(0, 100)}...`, 'green');
+                try {
+                    const data = JSON.parse(e.data);
+                    document.getElementById('data').innerHTML = 
+                        '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+                } catch(err) {
+                    document.getElementById('data').innerHTML = 
+                        '<pre>' + e.data + '</pre>';
+                }
+            };
+            
+            ws.onerror = function(e) {
+                log('WebSocket 错误!', 'red');
+                console.error('详细错误:', e);
+            };
+            
+            ws.onclose = function(e) {
+                document.getElementById('status').className = 'disconnected';
+                document.getElementById('status').textContent = '状态: 已断开';
+                log(`连接关闭 (代码: ${e.code}, 原因: ${e.reason || '无'})`, 'red');
+            };
+        }
+        
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                log('手动断开连接', 'orange');
+            }
+        }
+        
+        function sendTest() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const msg = JSON.stringify({ test: 'Hello from client!', time: new Date().toISOString() });
+                ws.send(msg);
+                log(`发送: ${msg}`, 'blue');
+            } else {
+                log('未连接,无法发送', 'red');
+            }
+        }
+        
+        // Auto-connect on page load
+        window.onload = function() {
+            log('页面加载完成,准备连接...', 'blue');
+            connect();
+        };
+    </script>
+</body>
+</html>

@@ -1,2 +1,0 @@
-# ctpticks
-ctp ticks
