@@ -23,6 +23,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+from fastapi.responses import FileResponse
 
 app = FastAPI()
 app.add_middleware(
@@ -318,6 +319,9 @@ async def index():
     html = html.replace("$INSTRUMENT_NAMES_JSON", json.dumps(INSTRUMENT_NAMES))
     return HTMLResponse(content=html)
 
+@app.get("/js/echarts.min.js")
+async def serve_echarts():
+    return FileResponse("js/echarts.min.js", media_type="application/javascript")
 
 @app.get("/api/klines")
 async def api_klines(inst: str = "rb2510", period: str = "1m"):

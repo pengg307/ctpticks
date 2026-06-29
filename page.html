@@ -2,8 +2,8 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>CTP 订单流实时监控系统</title>
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <title>CTP OrderFlow Monitor</title>
+    <script src="/js/echarts.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -195,9 +195,9 @@
 </head>
 <body>
     <div class="header">
-        <h1>CTP 订单流实时监控系统</h1>
-        <span class="status" id="conn-status">未连接</span>
-        <button class="btn-connect" id="btnConnect">连接WS</button>
+        <h1>CTP OrderFlow Monitor</h1>
+        <span class="status" id="conn-status">Disconnected</span>
+        <button class="btn-connect" id="btnConnect">Connect WS</button>
     </div>
     <div class="main-container">
         <div class="left-section" id="left-section"></div>
@@ -207,19 +207,19 @@
                 <span class="inst-code" id="right-code">--</span>
             </div>
             <div class="orderflow-list" id="orderflow-list">
-                <div style="text-align:center; color:#666; padding-top:50px;">点击"连接WS"开始接收数据</div>
+                <div style="text-align:center; color:#666; padding-top:50px;">Click "Connect WS" to start</div>
             </div>
             <div class="stats-bar">
                 <div class="row">
-                    <span class="label">最近100笔 主动买:</span>
+                    <span class="label">Buy Vol(100):</span>
                     <span class="value buy" id="stat-buy">0</span>
                 </div>
                 <div class="row">
-                    <span class="label">最近100笔 主动卖:</span>
+                    <span class="label">Sell Vol(100):</span>
                     <span class="value sell" id="stat-sell">0</span>
                 </div>
                 <div class="row">
-                    <span class="label">净Δ (买-卖):</span>
+                    <span class="label">Net Delta:</span>
                     <span class="value" id="stat-delta">0</span>
                 </div>
             </div>
@@ -228,7 +228,7 @@
     <div class="debug-panel" id="debugPanel"></div>
 
 <script>
-// ========== 后端注入的配置（自动同步 instruments.py）==========
+// Backend injected config
 const INSTRUMENTS = $INSTRUMENTS_JSON;
 const INSTRUMENT_NAMES = $INSTRUMENT_NAMES_JSON;
 
@@ -237,7 +237,16 @@ const WS_URL = "ws://" + SERVER_HOST + "/ws";
 const API_BASE = "http://" + SERVER_HOST;
 const PERIODS = ["1m", "5m", "15m", "1h"];
 
+// Period refresh interval in seconds
+const PERIOD_REFRESH = {
+    "1m": 10,    // 10 seconds for 1m
+    "5m": 30,    // 30 seconds for 5m
+    "15m": 60,   // 60 seconds for 15m
+    "1h": 300    // 5 minutes for 1h
+};
+
 const windowPeriods = {};
+const refreshTimers = {};  // Store refresh timers
 INSTRUMENTS.forEach(function(inst, i) { windowPeriods[i] = "1m"; });
 
 let selectedWindow = 0;
@@ -245,7 +254,7 @@ const charts = {};
 let ws = null;
 let isConnected = false;
 let userSelectedInst = null;
-const orderflowMarks = {};
+const orderflowData = {};  // Store orderflow by instrument
 
 function initLayout() {
     const leftSection = document.getElementById('left-section');
@@ -310,6 +319,24 @@ function initChart(windowIdx, inst) {
     }
 }
 
+// ========== KEY: Auto refresh Kline by period ==========
+function startAutoRefresh(windowIdx, inst, period) {
+    // Clear old timer
+    if (refreshTimers[windowIdx]) {
+        clearInterval(refreshTimers[windowIdx]);
+    }
+    
+    var interval = (PERIOD_REFRESH[period] || 10) * 1000;
+    
+    refreshTimers[windowIdx] = setInterval(function() {
+        if (isConnected) {
+            fetchKlineData(inst, period, windowIdx);
+        }
+    }, interval);
+    
+    console.log("Auto refresh started for " + inst + " " + period + " every " + interval/1000 + "s");
+}
+
 function fetchKlineData(inst, period, windowIdx) {
     var url = API_BASE + '/api/klines?inst=' + inst + '&period=' + period;
     fetch(url)
@@ -322,42 +349,72 @@ function fetchKlineData(inst, period, windowIdx) {
         });
 }
 
-function generateOrderflowMarks(klines, inst) {
-    var marks = [];
-    var flows = orderflowMarks[inst] || [];
+function changePeriod(windowIdx, period) {
+    windowPeriods[windowIdx] = period;
+    var win = document.getElementById('window-' + windowIdx);
+    win.querySelectorAll('.period-btn').forEach(function(btn) {
+        btn.classList.toggle('active', btn.dataset.period === period);
+    });
+    var inst = INSTRUMENTS[windowIdx];
+    fetchKlineData(inst, period, windowIdx);
+    startAutoRefresh(windowIdx, inst, period);  // Restart auto refresh with new period
+}
+
+function selectWindow(idx) {
+    selectedWindow = idx;
+    userSelectedInst = INSTRUMENTS[idx];
+    document.querySelectorAll('.chart-window').forEach(function(w, i) {
+        w.classList.toggle('active', i === idx);
+    });
+    var inst = INSTRUMENTS[idx];
+    document.getElementById('right-title').textContent = INSTRUMENT_NAMES[inst];
+    document.getElementById('right-code').textContent = inst;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({action: 'select', instrument: inst}));
+    }
+}
+
+function updateOrderflow(items) {
+    var list = document.getElementById('orderflow-list');
+    if (!items || items.length === 0) {
+        list.innerHTML = '<div style="text-align:center; color:#666; padding-top:50px;">No Data</div>';
+        return;
+    }
+    var buyTotal = 0, sellTotal = 0, deltaTotal = 0;
+    var html = items.map(function(item) {
+        var cls = item.aggressor === 'BUY' ? 'buy' : item.aggressor === 'SELL' ? 'sell' : 'mix';
+        var dirText = item.aggressor === 'BUY' ? 'B' : item.aggressor === 'SELL' ? 'S' : 'M';
+        buyTotal += item.buy_vol || 0;
+        sellTotal += item.sell_vol || 0;
+        deltaTotal += item.delta || 0;
+        return '<div class="orderflow-item ' + cls + '"><span class="time">' + (item.time || '--') + '</span><span class="price">' + (item.price || 0).toFixed(2) + '</span><span class="vol">' + (item.total_vol || 0) + '</span><span class="buy-v">' + (item.buy_vol || 0) + '</span><span class="sell-v">' + (item.sell_vol || 0) + '</span><span class="delta" style="color:' + ((item.delta||0)>=0?'#00d4aa':'#ff4757') + '">' + ((item.delta||0)>=0?'+':'') + (item.delta||0) + '</span><span class="dir">' + dirText + '</span></div>';
+    }).join('');
+    list.innerHTML = html;
+    list.scrollTop = 0;
+    document.getElementById('stat-buy').textContent = buyTotal;
+    document.getElementById('stat-sell').textContent = sellTotal;
+    var deltaEl = document.getElementById('stat-delta');
+    deltaEl.textContent = (deltaTotal >= 0 ? '+' : '') + deltaTotal;
+    deltaEl.style.color = deltaTotal >= 0 ? '#00d4aa' : '#ff4757';
+}
+
+// ========== KEY: Build orderflow data for tooltip ==========
+function buildOrderflowForTooltip(klines, inst) {
+    var flows = orderflowData[inst] || [];
     var flowByTime = {};
+    
     flows.forEach(function(f) {
         var timeKey = f.time ? f.time.substring(0, 5) : '';
-        if (!flowByTime[timeKey]) flowByTime[timeKey] = { buy: 0, sell: 0, total: 0 };
+        if (!flowByTime[timeKey]) {
+            flowByTime[timeKey] = { buy: 0, sell: 0, total: 0, count: 0 };
+        }
         flowByTime[timeKey].buy += f.buy_vol || 0;
         flowByTime[timeKey].sell += f.sell_vol || 0;
         flowByTime[timeKey].total += f.total_vol || 0;
+        flowByTime[timeKey].count += 1;
     });
-
-    klines.forEach(function(k, idx) {
-        var timeKey = k.time;
-        var flow = flowByTime[timeKey];
-        if (!flow || flow.total === 0) return;
-        var isBuy = flow.buy > flow.sell;
-        var ratio = flow.total > 0 ? Math.round((isBuy ? flow.buy : flow.sell) / flow.total * 100) : 50;
-        var yPos = isBuy ? k.high : k.low;
-        var offset = isBuy ? k.high * 0.001 : -k.high * 0.001;
-        
-        marks.push({
-            name: (isBuy ? '▲' : '▼') + ratio + '%',
-            coord: [idx, yPos + offset],
-            value: flow.total,
-            itemStyle: { color: isBuy ? '#00d4aa' : '#ff4757' },
-            label: {
-                show: true,
-                position: isBuy ? 'top' : 'bottom',
-                formatter: function(p) { return p.name + '\n' + p.value; },
-                fontSize: 9,
-                color: isBuy ? '#00d4aa' : '#ff4757'
-            }
-        });
-    });
-    return marks;
+    
+    return flowByTime;
 }
 
 function updateChart(windowIdx, inst, period, data) {
@@ -370,7 +427,7 @@ function updateChart(windowIdx, inst, period, data) {
     if (klines.length === 0) {
         chart.setOption({
             backgroundColor: 'transparent',
-            title: { text: '暂无K线', left: 'center', top: 'center', textStyle: { color: '#666' } }
+            title: { text: 'No Kline Data', left: 'center', top: 'center', textStyle: { color: '#666' } }
         }, true);
         return;
     }
@@ -381,7 +438,8 @@ function updateChart(windowIdx, inst, period, data) {
         return { value: k.volume, itemStyle: { color: k.close >= k.open ? '#00d4aa' : '#ff4757' } };
     });
 
-    var markPoints = generateOrderflowMarks(klines, inst);
+    // Build orderflow lookup for tooltip
+    var flowByTime = buildOrderflowForTooltip(klines, inst);
 
     var option = {
         backgroundColor: 'transparent',
@@ -404,21 +462,15 @@ function updateChart(windowIdx, inst, period, data) {
         dataZoom: [{ type: 'inside', xAxisIndex: [0,1,2], start: 60, end: 100 }],
         series: [
             {
-                name: 'K线', type: 'candlestick',
+                name: 'Kline', type: 'candlestick',
                 xAxisIndex: 0, yAxisIndex: 0, data: candleData,
                 itemStyle: {
                     color: '#00d4aa', color0: '#ff4757',
                     borderColor: '#00d4aa', borderColor0: '#ff4757'
-                },
-                markPoint: {
-                    symbol: 'circle',
-                    symbolSize: 8,
-                    data: markPoints,
-                    animation: false
                 }
             },
             {
-                name: '成交量', type: 'bar',
+                name: 'Volume', type: 'bar',
                 xAxisIndex: 1, yAxisIndex: 1, data: volumes, barWidth: '60%'
             },
             {
@@ -439,82 +491,81 @@ function updateChart(windowIdx, inst, period, data) {
                 barWidth: '50%'
             }
         ],
+        // ========== KEY: Tooltip with OrderFlow ==========
         tooltip: {
             trigger: 'axis',
             backgroundColor: 'rgba(10,14,26,0.95)',
             borderColor: '#2a3040',
-            textStyle: { color: '#e0e0e0', fontSize: 11 }
+            textStyle: { color: '#e0e0e0', fontSize: 11 },
+            formatter: function(params) {
+                var k = params[0];
+                if (!k || !k.data) return '';
+                
+                var d = k.data;  // [open, close, low, high]
+                var time = k.name;
+                var flow = flowByTime[time] || { buy: 0, sell: 0, total: 0, count: 0 };
+                var delta = flow.buy - flow.sell;
+                var buyRatio = flow.total > 0 ? Math.round(flow.buy / flow.total * 100) : 0;
+                var sellRatio = flow.total > 0 ? Math.round(flow.sell / flow.total * 100) : 0;
+                var dominant = delta > 0 ? 'BULL' : delta < 0 ? 'BEAR' : 'NEUTRAL';
+                var domColor = delta > 0 ? '#00d4aa' : delta < 0 ? '#ff4757' : '#888';
+                
+                var html = '<div style="font-weight:bold; margin-bottom:5px; color:' + domColor + ';">' + time + ' ' + dominant + '</div>';
+                html += '<div style="display:grid; grid-template-columns: auto auto; gap: 2px 12px; font-size:11px;">';
+                html += '<span style="color:#888;">O:</span><span style="text-align:right;">' + d[1] + '</span>';
+                html += '<span style="color:#888;">C:</span><span style="text-align:right;">' + d[2] + '</span>';
+                html += '<span style="color:#888;">L:</span><span style="text-align:right;">' + d[3] + '</span>';
+                html += '<span style="color:#888;">H:</span><span style="text-align:right;">' + d[4] + '</span>';
+                html += '</div>';
+                
+                if (flow.total > 0) {
+                    html += '<div style="margin-top:6px; border-top:1px solid #333; padding-top:5px;">';
+                    html += '<div style="font-weight:bold; color:#888; margin-bottom:3px; font-size:10px;">OrderFlow (' + flow.count + ')</div>';
+                    html += '<div style="display:grid; grid-template-columns: auto auto auto; gap: 2px 8px; font-size:10px;">';
+                    html += '<span style="color:#00d4aa;">Buy:</span>';
+                    html += '<span style="color:#00d4aa; text-align:right;">' + flow.buy + '</span>';
+                    html += '<span style="color:#00d4aa; text-align:right;">' + buyRatio + '%</span>';
+                    html += '<span style="color:#ff4757;">Sell:</span>';
+                    html += '<span style="color:#ff4757; text-align:right;">' + flow.sell + '</span>';
+                    html += '<span style="color:#ff4757; text-align:right;">' + sellRatio + '%</span>';
+                    html += '<span style="color:' + domColor + '; font-weight:bold;">Delta:</span>';
+                    html += '<span style="color:' + domColor + '; text-align:right; font-weight:bold;">' + (delta >= 0 ? '+' : '') + delta + '</span>';
+                    html += '<span></span>';
+                    html += '</div>';
+                    html += '</div>';
+                }
+                
+                return html;
+            }
         }
     };
 
     chart.setOption(option, true);
 }
 
-function changePeriod(windowIdx, period) {
-    windowPeriods[windowIdx] = period;
-    var win = document.getElementById('window-' + windowIdx);
-    win.querySelectorAll('.period-btn').forEach(function(btn) {
-        btn.classList.toggle('active', btn.dataset.period === period);
-    });
-    var inst = INSTRUMENTS[windowIdx];
-    fetchKlineData(inst, period, windowIdx);
-}
-
-function selectWindow(idx) {
-    selectedWindow = idx;
-    userSelectedInst = INSTRUMENTS[idx];
-    document.querySelectorAll('.chart-window').forEach(function(w, i) {
-        w.classList.toggle('active', i === idx);
-    });
-    var inst = INSTRUMENTS[idx];
-    document.getElementById('right-title').textContent = INSTRUMENT_NAMES[inst];
-    document.getElementById('right-code').textContent = inst;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({action: 'select', instrument: inst}));
-    }
-}
-
-function updateOrderflow(items) {
-    var list = document.getElementById('orderflow-list');
-    if (!items || items.length === 0) {
-        list.innerHTML = '<div style="text-align:center; color:#666; padding-top:50px;">暂无数据</div>';
-        return;
-    }
-    var buyTotal = 0, sellTotal = 0, deltaTotal = 0;
-    var html = items.map(function(item) {
-        var cls = item.aggressor === 'BUY' ? 'buy' : item.aggressor === 'SELL' ? 'sell' : 'mix';
-        var dirText = item.aggressor === 'BUY' ? '买' : item.aggressor === 'SELL' ? '卖' : '混';
-        buyTotal += item.buy_vol || 0;
-        sellTotal += item.sell_vol || 0;
-        deltaTotal += item.delta || 0;
-        return '<div class="orderflow-item ' + cls + '"><span class="time">' + (item.time || '--') + '</span><span class="price">' + (item.price || 0).toFixed(2) + '</span><span class="vol">' + (item.total_vol || 0) + '</span><span class="buy-v">' + (item.buy_vol || 0) + '</span><span class="sell-v">' + (item.sell_vol || 0) + '</span><span class="delta" style="color:' + ((item.delta||0)>=0?'#00d4aa':'#ff4757') + '">' + ((item.delta||0)>=0?'+':'') + (item.delta||0) + '</span><span class="dir">' + dirText + '</span></div>';
-    }).join('');
-    list.innerHTML = html;
-    list.scrollTop = 0;
-    document.getElementById('stat-buy').textContent = buyTotal;
-    document.getElementById('stat-sell').textContent = sellTotal;
-    var deltaEl = document.getElementById('stat-delta');
-    deltaEl.textContent = (deltaTotal >= 0 ? '+' : '') + deltaTotal;
-    deltaEl.style.color = deltaTotal >= 0 ? '#00d4aa' : '#ff4757';
-}
-
 function connectWS() {
     if (isConnected) return;
-    document.getElementById('conn-status').textContent = "连接中...";
+    document.getElementById('conn-status').textContent = "Connecting...";
     document.getElementById('btnConnect').disabled = true;
 
     try {
         ws = new WebSocket(WS_URL);
         ws.onopen = function() {
-            document.getElementById('conn-status').textContent = "已连接";
+            document.getElementById('conn-status').textContent = "Connected";
             document.getElementById('conn-status').classList.add('connected');
             isConnected = true;
-            document.getElementById('btnConnect').textContent = "已连接";
+            document.getElementById('btnConnect').textContent = "Connected";
+            
+            // Start auto refresh for all charts
+            INSTRUMENTS.forEach(function(inst, i) {
+                startAutoRefresh(i, inst, windowPeriods[i]);
+            });
         };
         ws.onmessage = function(event) {
             try {
                 var data = JSON.parse(event.data);
                 if (data.type === 'update') {
+                    // Update prices
                     if (data.instruments) {
                         for (var inst in data.instruments) {
                             var info = data.instruments[inst];
@@ -528,20 +579,25 @@ function connectWS() {
                             }
                         }
                     }
-                    if (data.selected_orderflow) {
-                        var selInst = data.selected_inst || INSTRUMENTS[0];
-                        if (!orderflowMarks[selInst]) orderflowMarks[selInst] = [];
+
+                    // Store orderflow data for all instruments
+                    if (data.selected_orderflow && data.selected_inst) {
+                        var selInst = data.selected_inst;
+                        if (!orderflowData[selInst]) orderflowData[selInst] = [];
                         data.selected_orderflow.forEach(function(f) {
-                            orderflowMarks[selInst].push(f);
+                            orderflowData[selInst].push(f);
                         });
-                        if (orderflowMarks[selInst].length > 500) {
-                            orderflowMarks[selInst] = orderflowMarks[selInst].slice(-500);
+                        if (orderflowData[selInst].length > 1000) {
+                            orderflowData[selInst] = orderflowData[selInst].slice(-1000);
                         }
-                        if (!userSelectedInst) {
+
+                        // Update right panel
+                        var currentInst = userSelectedInst || selInst;
+                        if (selInst === currentInst) {
                             updateOrderflow(data.selected_orderflow);
                             if (data.selected_name) {
                                 document.getElementById('right-title').textContent = data.selected_name;
-                                document.getElementById('right-code').textContent = data.selected_inst || '--';
+                                document.getElementById('right-code').textContent = selInst;
                             }
                         }
                     }
@@ -551,17 +607,22 @@ function connectWS() {
             }
         };
         ws.onerror = function() {
-            document.getElementById('conn-status').textContent = "错误";
+            document.getElementById('conn-status').textContent = "Error";
             document.getElementById('btnConnect').disabled = false;
-            document.getElementById('btnConnect').textContent = "重试连接";
+            document.getElementById('btnConnect').textContent = "Retry";
         };
         ws.onclose = function() {
-            document.getElementById('conn-status').textContent = "断开";
+            document.getElementById('conn-status').textContent = "Disconnected";
             document.getElementById('conn-status').classList.remove('connected');
             isConnected = false;
             userSelectedInst = null;
             document.getElementById('btnConnect').disabled = false;
-            document.getElementById('btnConnect').textContent = "连接WS";
+            document.getElementById('btnConnect').textContent = "Connect WS";
+            
+            // Stop all auto refresh
+            for (var t in refreshTimers) {
+                clearInterval(refreshTimers[t]);
+            }
         };
     } catch (e) {
         console.error("WS connect error:", e);
