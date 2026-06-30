@@ -2,61 +2,104 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>CTP OrderFlow Monitor</title>
-    <script src="/js/echarts.min.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CTP 订单流实时监控</title>
+    <script src="/js/echarts.min.js" onerror="this.src='https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js'"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             background: #0a0e1a;
             color: #e0e0e0;
-            font-family: 'Microsoft YaHei', monospace;
+            font-family: 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             overflow: hidden;
             height: 100vh;
+            -webkit-tap-highlight-color: transparent;
         }
         .header {
-            height: 40px;
+            height: 44px;
             background: #1a1f2e;
             display: flex;
             align-items: center;
-            padding: 0 15px;
+            padding: 0 12px;
             border-bottom: 1px solid #2a3040;
+            flex-shrink: 0;
         }
         .header h1 {
-            font-size: 16px;
+            font-size: 15px;
             color: #00d4aa;
-            margin-right: 30px;
+            margin-right: 10px;
+            white-space: nowrap;
         }
         .header .status {
-            font-size: 12px;
+            font-size: 11px;
             color: #888;
+            white-space: nowrap;
         }
         .header .status.connected { color: #00d4aa; }
         .header .btn-connect {
             margin-left: auto;
-            padding: 4px 16px;
+            padding: 5px 12px;
             background: #00d4aa;
             color: #000;
             border: none;
             border-radius: 4px;
             cursor: pointer;
-            font-size: 12px;
+            font-size: 11px;
             font-weight: bold;
+            white-space: nowrap;
         }
         .header .btn-connect:hover { background: #00b894; }
         .header .btn-connect:disabled { background: #666; cursor: not-allowed; }
+        .header .btn-source {
+            margin-left: 8px;
+            padding: 5px 10px;
+            background: #2a3040;
+            color: #888;
+            border: 1px solid #3a4050;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+        .header .btn-source.mock { background: #00d4aa; color: #000; border-color: #00d4aa; }
+        .header .btn-source.ctp { background: #e74c3c; color: #fff; border-color: #e74c3c; }
+        .header .mode-btns {
+            display: flex;
+            gap: 6px;
+            margin-left: 12px;
+        }
+        .header .mode-btn {
+            padding: 4px 10px;
+            background: #2a3040;
+            border: 1px solid #3a4050;
+            color: #888;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+        .header .mode-btn:hover,
+        .header .mode-btn.active {
+            background: #00d4aa;
+            color: #000;
+            border-color: #00d4aa;
+        }
+
         .main-container {
             display: flex;
-            height: calc(100vh - 40px);
+            height: calc(100vh - 44px);
+            overflow: hidden;
         }
         .left-section {
             display: flex;
             flex: 1;
+            min-width: 0;
         }
         .column {
             flex: 1;
             display: flex;
             flex-direction: column;
             border-right: 1px solid #1a1f2e;
+            min-width: 0;
         }
         .chart-window {
             flex: 1;
@@ -64,6 +107,7 @@
             position: relative;
             cursor: pointer;
             transition: box-shadow 0.2s;
+            min-height: 0;
         }
         .chart-window:hover { box-shadow: inset 0 0 20px rgba(0,212,170,0.1); }
         .chart-window.active { box-shadow: inset 0 0 0 2px #00d4aa; }
@@ -74,33 +118,54 @@
             background: rgba(26,31,46,0.95);
             display: flex;
             align-items: center;
-            padding: 0 8px;
+            padding: 0 6px;
             z-index: 10;
-            font-size: 12px;
+            font-size: 11px;
+        }
+        .chart-window .title-bar .inst-select {
+            background: #2a3040;
+            border: 1px solid #3a4050;
+            color: #fff;
+            padding: 2px 4px;
+            font-size: 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            max-width: 80px;
+            margin-right: 4px;
+        }
+        .chart-window .title-bar .inst-select option {
+            background: #1a1f2e;
+            color: #fff;
         }
         .chart-window .title-bar .inst-name {
             color: #fff;
             font-weight: bold;
-            margin-right: 10px;
+            margin-right: 6px;
+            white-space: nowrap;
         }
         .chart-window .title-bar .price {
             color: #00d4aa;
-            margin-right: 10px;
+            margin-right: 6px;
+            font-family: monospace;
+            font-size: 12px;
+            transition: color 0.3s;
         }
         .chart-window .title-bar .price.down { color: #ff4757; }
+        .chart-window .title-bar .price.up { color: #00ff88; }
         .chart-window .title-bar .period-selector {
             margin-left: auto;
             display: flex;
-            gap: 4px;
+            gap: 2px;
         }
         .chart-window .title-bar .period-btn {
             background: #2a3040;
             border: 1px solid #3a4050;
             color: #888;
-            padding: 2px 6px;
-            font-size: 10px;
+            padding: 2px 5px;
+            font-size: 9px;
             cursor: pointer;
             border-radius: 3px;
+            white-space: nowrap;
         }
         .chart-window .title-bar .period-btn:hover,
         .chart-window .title-bar .period-btn.active {
@@ -114,90 +179,208 @@
             padding-top: 28px;
         }
         .right-section {
-            width: 380px;
+            width: 360px;
             background: #0f1420;
             border-left: 2px solid #1a1f2e;
             display: flex;
             flex-direction: column;
+            flex-shrink: 0;
         }
         .right-header {
-            height: 40px;
+            height: 36px;
             background: #1a1f2e;
             display: flex;
             align-items: center;
-            padding: 0 12px;
+            padding: 0 10px;
             border-bottom: 1px solid #2a3040;
+            flex-shrink: 0;
         }
         .right-header .inst-title {
-            font-size: 14px;
+            font-size: 13px;
             color: #00d4aa;
             font-weight: bold;
         }
         .right-header .inst-code {
-            font-size: 11px;
+            font-size: 10px;
             color: #888;
-            margin-left: 8px;
+            margin-left: 6px;
         }
         .orderflow-list {
             flex: 1;
             overflow-y: auto;
-            padding: 8px;
+            padding: 6px;
+            -webkit-overflow-scrolling: touch;
         }
         .orderflow-item {
             display: flex;
             align-items: center;
-            padding: 4px 6px;
+            padding: 3px 5px;
             margin-bottom: 2px;
             border-radius: 4px;
-            font-size: 12px;
-            font-family: monospace;
+            font-size: 11px;
+            font-family: 'SF Mono', 'Consolas', monospace;
         }
         .orderflow-item.buy { background: rgba(0,212,170,0.08); }
         .orderflow-item.sell { background: rgba(255,71,87,0.08); }
         .orderflow-item.mix { background: rgba(136,136,136,0.05); }
-        .orderflow-item .time { width: 60px; color: #666; }
-        .orderflow-item .price { width: 70px; text-align: right; }
-        .orderflow-item .vol { width: 40px; text-align: center; }
-        .orderflow-item .buy-v { width: 45px; text-align: right; color: #00d4aa; }
-        .orderflow-item .sell-v { width: 45px; text-align: right; color: #ff4757; }
-        .orderflow-item .delta { width: 50px; text-align: right; font-weight: bold; }
+        .orderflow-item .time { width: 55px; color: #666; font-size: 10px; }
+        .orderflow-item .price { width: 65px; text-align: right; }
+        .orderflow-item .vol { width: 35px; text-align: center; font-size: 10px; }
+        .orderflow-item .buy-v { width: 40px; text-align: right; color: #00d4aa; font-size: 10px; }
+        .orderflow-item .sell-v { width: 40px; text-align: right; color: #ff4757; font-size: 10px; }
+        .orderflow-item .delta { width: 45px; text-align: right; font-weight: bold; font-size: 10px; }
         .orderflow-item .dir {
-            width: 30px;
+            width: 26px;
             text-align: center;
-            font-size: 10px;
+            font-size: 9px;
             border-radius: 3px;
             padding: 1px 0;
+            margin-left: 4px;
         }
         .orderflow-item.buy .dir { background: #00d4aa; color: #000; }
         .orderflow-item.sell .dir { background: #ff4757; color: #fff; }
         .orderflow-item.mix .dir { background: #666; color: #fff; }
         .stats-bar {
-            height: 60px;
+            height: 56px;
             background: #1a1f2e;
             border-top: 1px solid #2a3040;
-            padding: 8px 12px;
-            font-size: 12px;
+            padding: 6px 10px;
+            font-size: 11px;
+            flex-shrink: 0;
         }
         .stats-bar .row {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 4px;
+            margin-bottom: 3px;
         }
         .stats-bar .label { color: #888; }
         .stats-bar .value { color: #fff; font-weight: bold; }
         .stats-bar .value.buy { color: #00d4aa; }
         .stats-bar .value.sell { color: #ff4757; }
-        .debug-panel { display: none; }
-        ::-webkit-scrollbar { width: 6px; }
+        .debug-panel {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: #1a1f2e;
+            border-top: 1px solid #2a3040;
+            padding: 6px 12px;
+            font-size: 10px;
+            color: #888;
+            max-height: 100px;
+            overflow-y: auto;
+            z-index: 100;
+            display: none;
+        }
+        .debug-panel.visible { display: block; }
+        .debug-panel .log-entry { margin-bottom: 2px; }
+        .debug-panel .log-time { color: #666; }
+        .debug-panel .log-info { color: #00d4ff; }
+        .debug-panel .log-error { color: #e94560; }
+        .debug-panel .log-success { color: #00ff88; }
+        .debug-panel .log-warn { color: #f1c40f; }
+
+        .mobile-toggle {
+            display: none;
+            position: fixed;
+            bottom: 110px;
+            right: 10px;
+            width: 40px;
+            height: 40px;
+            background: #00d4aa;
+            color: #000;
+            border: none;
+            border-radius: 50%;
+            font-size: 18px;
+            z-index: 50;
+            cursor: pointer;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* [FIX-2] 新增：订单流新数据高亮动画 */
+        @keyframes flashNew {
+            0% { background-color: rgba(0,212,170,0.4); }
+            100% { background-color: transparent; }
+        }
+        .orderflow-item.flash-new {
+            animation: flashNew 0.6s ease-out;
+        }
+
+        /* [FIX-3] 新增：价格闪烁动画 */
+        @keyframes priceFlashUp {
+            0% { color: #00ff88; text-shadow: 0 0 8px rgba(0,255,136,0.5); }
+            100% { color: #00d4aa; text-shadow: none; }
+        }
+        @keyframes priceFlashDown {
+            0% { color: #ff4757; text-shadow: 0 0 8px rgba(255,71,87,0.5); }
+            100% { color: #ff4757; text-shadow: none; }
+        }
+        .price.flash-up { animation: priceFlashUp 0.5s ease-out; }
+        .price.flash-down { animation: priceFlashDown 0.5s ease-out; }
+
+        /* 手机响应式 */
+        @media (max-width: 768px) {
+            body { overflow: auto; }
+            .header { height: 40px; padding: 0 8px; }
+            .header h1 { font-size: 13px; }
+            .header .mode-btns { display: none; }
+            .main-container {
+                flex-direction: column;
+                height: auto;
+                min-height: calc(100vh - 40px);
+            }
+            .left-section {
+                flex-direction: column;
+                height: auto;
+            }
+            .column {
+                flex-direction: row;
+                flex-wrap: wrap;
+                border-right: none;
+                border-bottom: 1px solid #1a1f2e;
+            }
+            .chart-window {
+                width: 100%;
+                height: 280px;
+                border-bottom: 1px solid #1a1f2e;
+            }
+            .right-section {
+                width: 100%;
+                height: 400px;
+                border-left: none;
+                border-top: 2px solid #1a1f2e;
+            }
+            .mobile-toggle { display: flex; }
+        }
+
+        @media (max-width: 480px) {
+            .chart-window { height: 220px; }
+            .chart-window .title-bar .period-selector { display: none; }
+            .chart-window.active .title-bar .period-selector { display: flex; }
+            .orderflow-item { font-size: 10px; padding: 2px 4px; }
+            .orderflow-item .time { width: 50px; }
+            .orderflow-item .price { width: 55px; }
+            .orderflow-item .vol { width: 30px; }
+            .orderflow-item .buy-v, .orderflow-item .sell-v { width: 35px; }
+            .orderflow-item .delta { width: 40px; }
+        }
+
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
         ::-webkit-scrollbar-track { background: #0a0e1a; }
-        ::-webkit-scrollbar-thumb { background: #2a3040; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb { background: #2a3040; border-radius: 2px; }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>CTP OrderFlow Monitor</h1>
-        <span class="status" id="conn-status">Disconnected</span>
-        <button class="btn-connect" id="btnConnect">Connect WS</button>
+        <h1>CTP订单流</h1>
+        <div class="mode-btns">
+            <button class="mode-btn" id="btnMode4" onclick="changeMode(4)">4窗口</button>
+            <button class="mode-btn active" id="btnMode6" onclick="changeMode(6)">6窗口</button>
+        </div>
+        <span class="status" id="conn-status">未连接</span>
+        <button class="btn-source mock" id="btnSource" title="点击切换Mock/CTP">Mock</button>
+        <button class="btn-connect" id="btnConnect">连接</button>
     </div>
     <div class="main-container">
         <div class="left-section" id="left-section"></div>
@@ -207,214 +390,241 @@
                 <span class="inst-code" id="right-code">--</span>
             </div>
             <div class="orderflow-list" id="orderflow-list">
-                <div style="text-align:center; color:#666; padding-top:50px;">Click "Connect WS" to start</div>
+                <div style="text-align:center; color:#666; padding-top:50px;">点击"连接"开始接收数据</div>
             </div>
             <div class="stats-bar">
                 <div class="row">
-                    <span class="label">Buy Vol(100):</span>
+                    <span class="label">主动买:</span>
                     <span class="value buy" id="stat-buy">0</span>
                 </div>
                 <div class="row">
-                    <span class="label">Sell Vol(100):</span>
+                    <span class="label">主动卖:</span>
                     <span class="value sell" id="stat-sell">0</span>
                 </div>
                 <div class="row">
-                    <span class="label">Net Delta:</span>
+                    <span class="label">净Δ:</span>
                     <span class="value" id="stat-delta">0</span>
                 </div>
             </div>
         </div>
     </div>
-    <div class="debug-panel" id="debugPanel"></div>
+    <div class="debug-panel" id="debugPanel">
+        <div style="color:#666; margin-bottom:4px; display:flex; justify-content:space-between;">
+            <span>调试日志</span>
+            <span style="cursor:pointer; color:#888;" onclick="toggleDebug()">✕</span>
+        </div>
+        <div id="debugLogs"></div>
+    </div>
+    <button class="mobile-toggle" id="mobileToggle" onclick="toggleDebug()">📋</button>
 
 <script>
-// Backend injected config
-const INSTRUMENTS = $INSTRUMENTS_JSON;
-const INSTRUMENT_NAMES = $INSTRUMENT_NAMES_JSON;
+// ==================== 后端注入的配置 ====================
+const SERVER_CONFIG = $SERVER_CONFIG;
+const ALL_INSTRUMENTS = SERVER_CONFIG.all_instruments || [];
+const ALL_INSTRUMENT_NAMES = SERVER_CONFIG.instrument_names || {};
+const PERIODS = SERVER_CONFIG.periods || ["1m", "5m", "15m", "1h"];
+const DEFAULT_MODE = SERVER_CONFIG.default_mode || 6;
+const DEFAULT_WINDOWS = SERVER_CONFIG.default_windows || [];
 
-const SERVER_HOST = "127.0.0.1:8080";
-const WS_URL = "ws://" + SERVER_HOST + "/ws";
-const API_BASE = "http://" + SERVER_HOST;
-const PERIODS = ["1m", "5m", "15m", "1h"];
+// ==================== 服务器配置 ====================
+const SERVER_HOST = window.location.host || "localhost:8080";
+// 如果从 file:// 协议打开，强制使用 localhost:8080
+const WS_HOST = (window.location.protocol === 'file:' || !window.location.host) 
+    ? "localhost:8080" 
+    : window.location.host;
+const WS_URL = (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + WS_HOST + "/ws";
+const API_BASE = (window.location.protocol === 'file:' ? 'http:' : window.location.protocol) + '//' + WS_HOST;
 
-// Period refresh interval in seconds
-const PERIOD_REFRESH = {
-    "1m": 10,    // 10 seconds for 1m
-    "5m": 30,    // 30 seconds for 5m
-    "15m": 60,   // 60 seconds for 15m
-    "1h": 300    // 5 minutes for 1h
-};
-
-const windowPeriods = {};
-const refreshTimers = {};  // Store refresh timers
-INSTRUMENTS.forEach(function(inst, i) { windowPeriods[i] = "1m"; });
-
+// ==================== 状态变量 ====================
+let windowMode = DEFAULT_MODE;
+let windowInstruments = DEFAULT_WINDOWS.slice(0, windowMode);
 let selectedWindow = 0;
+let windowPeriods = {};
 const charts = {};
 let ws = null;
 let isConnected = false;
-let userSelectedInst = null;
-const orderflowData = {};  // Store orderflow by instrument
+let currentSource = 'mock';
+let reconnectTimer = null;
+let heartbeatTimer = null;  // [FIX] 全局心跳定时器
+let isConnecting = false;   // [FIX] 防止重复连接
+// [FIX-3] 记录上次价格用于判断涨跌
+let lastPrices = {};
 
+// ==================== 工具函数 ====================
+function debugLog(msg, type) {
+    const logs = document.getElementById('debugLogs');
+    const time = new Date().toLocaleTimeString('zh-CN', {hour12:false});
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    entry.innerHTML = '<span class="log-time">[' + time + ']</span> <span class="log-' + (type||'info') + '">' + escapeHtml(msg) + '</span>';
+    logs.insertBefore(entry, logs.firstChild);
+    while (logs.children.length > 30) logs.removeChild(logs.lastChild);
+    console.log('[' + type + '] ' + msg);
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function toggleDebug() {
+    document.getElementById('debugPanel').classList.toggle('visible');
+}
+
+// ==================== 窗口模式切换 ====================
+function changeMode(mode) {
+    if (mode === windowMode) return;
+    windowMode = mode;
+
+    document.getElementById('btnMode4').classList.toggle('active', mode === 4);
+    document.getElementById('btnMode6').classList.toggle('active', mode === 6);
+
+    if (ws && isConnected) {
+        ws.send(JSON.stringify({action: 'change_mode', mode: mode}));
+    }
+
+    initLayout();
+    setTimeout(function() {
+        for (var i = 0; i < windowMode; i++) {
+            var inst = windowInstruments[i] || DEFAULT_WINDOWS[i] || ALL_INSTRUMENTS[0];
+            windowInstruments[i] = inst;
+            initChart(i, inst);
+        }
+    }, 300);
+
+    debugLog('切换为 ' + mode + ' 窗口模式', 'info');
+}
+
+function changeWindowInstrument(windowIdx, inst) {
+    windowInstruments[windowIdx] = inst;
+    if (ws && isConnected) {
+        ws.send(JSON.stringify({action: 'change_instrument', window_idx: windowIdx, instrument: inst}));
+    }
+    var period = windowPeriods[windowIdx] || '1m';
+    fetchKlineData(inst, period, windowIdx);
+    debugLog('窗口 ' + windowIdx + ' -> ' + inst, 'info');
+}
+
+// ==================== 布局初始化 ====================
 function initLayout() {
+    debugLog("初始化布局...", "info");
     const leftSection = document.getElementById('left-section');
-    if (!leftSection) return;
+    leftSection.innerHTML = '';
 
-    const col1 = document.createElement('div');
+    var colCount = 2;
+    var rowCount = windowMode / colCount;
+
+    var col1 = document.createElement('div');
     col1.className = 'column';
-    const col2 = document.createElement('div');
+    var col2 = document.createElement('div');
     col2.className = 'column';
 
-    INSTRUMENTS.forEach(function(inst, i) {
-        const col = i < 3 ? col1 : col2;
-        const win = document.createElement('div');
+    for (var i = 0; i < windowMode; i++) {
+        var col = i < rowCount ? col1 : col2;
+        var inst = windowInstruments[i] || DEFAULT_WINDOWS[i] || ALL_INSTRUMENTS[0];
+        windowInstruments[i] = inst;
+        if (!windowPeriods[i]) windowPeriods[i] = PERIODS[0] || '1m';
+
+        var win = document.createElement('div');
         win.className = 'chart-window' + (i === 0 ? ' active' : '');
         win.id = 'window-' + i;
         win.dataset.index = i;
         win.dataset.inst = inst;
 
+        var selectOptions = '';
+        ALL_INSTRUMENTS.forEach(function(code) {
+            var selected = code === inst ? ' selected' : '';
+            var name = ALL_INSTRUMENT_NAMES[code] || code;
+            selectOptions += '<option value="' + code + '"' + selected + '>' + name + '</option>';
+        });
+
         var periodButtons = '';
         PERIODS.forEach(function(p) {
-            var activeClass = p === '1m' ? 'active' : '';
+            var activeClass = p === windowPeriods[i] ? 'active' : '';
             periodButtons += '<button class="period-btn ' + activeClass + '" data-period="' + p + '">' + p + '</button>';
         });
 
-        win.innerHTML = '<div class="title-bar"><span class="inst-name">' + INSTRUMENT_NAMES[inst] + '</span><span class="price" id="price-' + i + '">--</span><div class="period-selector">' + periodButtons + '</div></div><div class="chart-container" id="chart-' + i + '"></div>';
+        win.innerHTML = '<div class="title-bar">' +
+            '<select class="inst-select" data-idx="' + i + '">' + selectOptions + '</select>' +
+            '<span class="price" id="price-' + i + '">--</span>' +
+            '<div class="period-selector">' + periodButtons + '</div>' +
+            '</div>' +
+            '<div class="chart-container" id="chart-' + i + '"></div>';
 
-        win.addEventListener('click', function(e) {
-            if (e.target.classList.contains('period-btn')) return;
-            selectWindow(i);
-        });
-        
-        win.querySelectorAll('.period-btn').forEach(function(btn) {
-            btn.addEventListener('click', function(e) {
-                e.stopPropagation();
-                changePeriod(i, btn.dataset.period);
-            });
-        });
-        
         col.appendChild(win);
-    });
+    }
 
     leftSection.appendChild(col1);
     leftSection.appendChild(col2);
 
-    setTimeout(function() {
-        INSTRUMENTS.forEach(function(inst, i) {
-            initChart(i, inst);
+    for (var i = 0; i < windowMode; i++) {
+        var win = document.getElementById('window-' + i);
+
+        win.addEventListener('click', (function(idx) {
+            return function(e) {
+                if (e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION' || e.target.classList.contains('period-btn')) return;
+                selectWindow(idx);
+            };
+        })(i));
+
+        var select = win.querySelector('.inst-select');
+        select.addEventListener('change', (function(idx) {
+            return function(e) {
+                changeWindowInstrument(idx, e.target.value);
+            };
+        })(i));
+
+        win.querySelectorAll('.period-btn').forEach(function(btn) {
+            btn.addEventListener('click', (function(idx, period) {
+                return function(e) {
+                    e.stopPropagation();
+                    changePeriod(idx, period);
+                };
+            })(i, btn.dataset.period));
         });
-    }, 300);
+    }
+
+    setTimeout(function() {
+        for (var i = 0; i < windowMode; i++) {
+            initChart(i, windowInstruments[i]);
+        }
+    }, 200);
 }
 
 function initChart(windowIdx, inst) {
     var container = document.getElementById('chart-' + windowIdx);
     if (!container) return;
+
+    if (charts[windowIdx]) {
+        charts[windowIdx].dispose();
+        delete charts[windowIdx];
+    }
+
     try {
         var chart = echarts.init(container, 'dark');
         charts[windowIdx] = chart;
-        fetchKlineData(inst, windowPeriods[windowIdx], windowIdx);
+        fetchKlineData(inst, windowPeriods[windowIdx] || '1m', windowIdx);
         window.addEventListener('resize', function() { chart.resize(); });
     } catch (e) {
-        console.error("ECharts init error:", e);
+        debugLog("图表初始化失败 " + windowIdx + ": " + e.message, "error");
     }
-}
-
-// ========== KEY: Auto refresh Kline by period ==========
-function startAutoRefresh(windowIdx, inst, period) {
-    // Clear old timer
-    if (refreshTimers[windowIdx]) {
-        clearInterval(refreshTimers[windowIdx]);
-    }
-    
-    var interval = (PERIOD_REFRESH[period] || 10) * 1000;
-    
-    refreshTimers[windowIdx] = setInterval(function() {
-        if (isConnected) {
-            fetchKlineData(inst, period, windowIdx);
-        }
-    }, interval);
-    
-    console.log("Auto refresh started for " + inst + " " + period + " every " + interval/1000 + "s");
 }
 
 function fetchKlineData(inst, period, windowIdx) {
-    var url = API_BASE + '/api/klines?inst=' + inst + '&period=' + period;
+    var url = API_BASE + '/api/klines?inst=' + encodeURIComponent(inst) + '&period=' + encodeURIComponent(period);
     fetch(url)
-        .then(function(r) { return r.json(); })
+        .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(function(data) {
+            if (data.error) {
+                debugLog("K线错误: " + data.error, "error");
+                return;
+            }
             updateChart(windowIdx, inst, period, data);
         })
         .catch(function(err) {
-            console.error("Kline fetch error:", err);
+            debugLog("获取K线失败 " + inst + ": " + err.message, "error");
         });
-}
-
-function changePeriod(windowIdx, period) {
-    windowPeriods[windowIdx] = period;
-    var win = document.getElementById('window-' + windowIdx);
-    win.querySelectorAll('.period-btn').forEach(function(btn) {
-        btn.classList.toggle('active', btn.dataset.period === period);
-    });
-    var inst = INSTRUMENTS[windowIdx];
-    fetchKlineData(inst, period, windowIdx);
-    startAutoRefresh(windowIdx, inst, period);  // Restart auto refresh with new period
-}
-
-function selectWindow(idx) {
-    selectedWindow = idx;
-    userSelectedInst = INSTRUMENTS[idx];
-    document.querySelectorAll('.chart-window').forEach(function(w, i) {
-        w.classList.toggle('active', i === idx);
-    });
-    var inst = INSTRUMENTS[idx];
-    document.getElementById('right-title').textContent = INSTRUMENT_NAMES[inst];
-    document.getElementById('right-code').textContent = inst;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({action: 'select', instrument: inst}));
-    }
-}
-
-function updateOrderflow(items) {
-    var list = document.getElementById('orderflow-list');
-    if (!items || items.length === 0) {
-        list.innerHTML = '<div style="text-align:center; color:#666; padding-top:50px;">No Data</div>';
-        return;
-    }
-    var buyTotal = 0, sellTotal = 0, deltaTotal = 0;
-    var html = items.map(function(item) {
-        var cls = item.aggressor === 'BUY' ? 'buy' : item.aggressor === 'SELL' ? 'sell' : 'mix';
-        var dirText = item.aggressor === 'BUY' ? 'B' : item.aggressor === 'SELL' ? 'S' : 'M';
-        buyTotal += item.buy_vol || 0;
-        sellTotal += item.sell_vol || 0;
-        deltaTotal += item.delta || 0;
-        return '<div class="orderflow-item ' + cls + '"><span class="time">' + (item.time || '--') + '</span><span class="price">' + (item.price || 0).toFixed(2) + '</span><span class="vol">' + (item.total_vol || 0) + '</span><span class="buy-v">' + (item.buy_vol || 0) + '</span><span class="sell-v">' + (item.sell_vol || 0) + '</span><span class="delta" style="color:' + ((item.delta||0)>=0?'#00d4aa':'#ff4757') + '">' + ((item.delta||0)>=0?'+':'') + (item.delta||0) + '</span><span class="dir">' + dirText + '</span></div>';
-    }).join('');
-    list.innerHTML = html;
-    list.scrollTop = 0;
-    document.getElementById('stat-buy').textContent = buyTotal;
-    document.getElementById('stat-sell').textContent = sellTotal;
-    var deltaEl = document.getElementById('stat-delta');
-    deltaEl.textContent = (deltaTotal >= 0 ? '+' : '') + deltaTotal;
-    deltaEl.style.color = deltaTotal >= 0 ? '#00d4aa' : '#ff4757';
-}
-
-// ========== KEY: Build orderflow data for tooltip ==========
-function buildOrderflowForTooltip(klines, inst) {
-    var flows = orderflowData[inst] || [];
-    var flowByTime = {};
-    
-    flows.forEach(function(f) {
-        var timeKey = f.time ? f.time.substring(0, 5) : '';
-        if (!flowByTime[timeKey]) {
-            flowByTime[timeKey] = { buy: 0, sell: 0, total: 0, count: 0 };
-        }
-        flowByTime[timeKey].buy += f.buy_vol || 0;
-        flowByTime[timeKey].sell += f.sell_vol || 0;
-        flowByTime[timeKey].total += f.total_vol || 0;
-        flowByTime[timeKey].count += 1;
-    });
-    
-    return flowByTime;
 }
 
 function updateChart(windowIdx, inst, period, data) {
@@ -425,44 +635,52 @@ function updateChart(windowIdx, inst, period, data) {
     var macd = data.macd || { dif: [], dea: [], macd: [] };
 
     if (klines.length === 0) {
-        chart.setOption({
-            backgroundColor: 'transparent',
-            title: { text: 'No Kline Data', left: 'center', top: 'center', textStyle: { color: '#666' } }
-        }, true);
+        debugLog(inst + " " + period + " 无K线数据", "warn");
         return;
     }
 
     var dates = klines.map(function(k) { return k.time; });
     var candleData = klines.map(function(k) { return [k.open, k.close, k.low, k.high]; });
+
     var volumes = klines.map(function(k) {
-        return { value: k.volume, itemStyle: { color: k.close >= k.open ? '#00d4aa' : '#ff4757' } };
+        var delta = k.delta || 0;
+        var color;
+        if (delta > 0) color = '#00ff88';
+        else if (delta < 0) color = '#ff6b6b';
+        else color = '#666666';
+        return { value: k.volume, itemStyle: { color: color } };
     });
 
-    // Build orderflow lookup for tooltip
-    var flowByTime = buildOrderflowForTooltip(klines, inst);
+    var deltaData = klines.map(function(k) {
+        var d = k.delta || 0;
+        return { value: Math.abs(d), itemStyle: { color: d >= 0 ? '#00ff88' : '#ff6b6b' } };
+    });
 
     var option = {
         backgroundColor: 'transparent',
         animation: false,
         grid: [
-            { left: '8%', right: '4%', top: '12%', height: '48%' },
-            { left: '8%', right: '4%', top: '64%', height: '16%' },
-            { left: '8%', right: '4%', top: '82%', height: '14%' }
+            { left: '10%', right: '6%', top: '8%', height: '42%' },
+            { left: '10%', right: '6%', top: '52%', height: '14%' },
+            { left: '10%', right: '6%', top: '68%', height: '12%' },
+            { left: '10%', right: '6%', top: '82%', height: '14%' }
         ],
         xAxis: [
             { type: 'category', data: dates, gridIndex: 0, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { color: '#666', fontSize: 9 } },
             { type: 'category', data: dates, gridIndex: 1, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { show: false } },
-            { type: 'category', data: dates, gridIndex: 2, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { color: '#666', fontSize: 9 } }
+            { type: 'category', data: dates, gridIndex: 2, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { show: false } },
+            { type: 'category', data: dates, gridIndex: 3, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { color: '#666', fontSize: 9 } }
         ],
         yAxis: [
             { scale: true, gridIndex: 0, splitLine: { lineStyle: { color: '#1a1f2e' } }, axisLabel: { color: '#888', fontSize: 9 } },
             { scale: true, gridIndex: 1, splitLine: { show: false }, axisLabel: { show: false } },
-            { scale: true, gridIndex: 2, splitLine: { lineStyle: { color: '#1a1f2e' } }, axisLabel: { color: '#888', fontSize: 9 } }
+            { scale: true, gridIndex: 2, splitLine: { show: false }, axisLabel: { show: false } },
+            { scale: true, gridIndex: 3, splitLine: { lineStyle: { color: '#1a1f2e' } }, axisLabel: { color: '#888', fontSize: 9 } }
         ],
-        dataZoom: [{ type: 'inside', xAxisIndex: [0,1,2], start: 60, end: 100 }],
+        dataZoom: [{ type: 'inside', xAxisIndex: [0,1,2,3], start: 50, end: 100 }],
         series: [
             {
-                name: 'Kline', type: 'candlestick',
+                name: 'K线', type: 'candlestick',
                 xAxisIndex: 0, yAxisIndex: 0, data: candleData,
                 itemStyle: {
                     color: '#00d4aa', color0: '#ff4757',
@@ -470,28 +688,31 @@ function updateChart(windowIdx, inst, period, data) {
                 }
             },
             {
-                name: 'Volume', type: 'bar',
+                name: '成交量', type: 'bar',
                 xAxisIndex: 1, yAxisIndex: 1, data: volumes, barWidth: '60%'
             },
             {
-                name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2,
+                name: 'Delta', type: 'bar',
+                xAxisIndex: 2, yAxisIndex: 2, data: deltaData, barWidth: '50%'
+            },
+            {
+                name: 'DIF', type: 'line', xAxisIndex: 3, yAxisIndex: 3,
                 data: macd.dif || [], smooth: true, showSymbol: false,
                 lineStyle: { color: '#f1c40f', width: 1 }
             },
             {
-                name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2,
+                name: 'DEA', type: 'line', xAxisIndex: 3, yAxisIndex: 3,
                 data: macd.dea || [], smooth: true, showSymbol: false,
                 lineStyle: { color: '#3498db', width: 1 }
             },
             {
-                name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2,
+                name: 'MACD', type: 'bar', xAxisIndex: 3, yAxisIndex: 3,
                 data: (macd.macd || []).map(function(v) {
                     return { value: v, itemStyle: { color: v >= 0 ? '#00d4aa' : '#ff4757' } };
                 }),
-                barWidth: '50%'
+                barWidth: '40%'
             }
         ],
-        // ========== KEY: Tooltip with OrderFlow ==========
         tooltip: {
             trigger: 'axis',
             backgroundColor: 'rgba(10,14,26,0.95)',
@@ -500,42 +721,26 @@ function updateChart(windowIdx, inst, period, data) {
             formatter: function(params) {
                 var k = params[0];
                 if (!k || !k.data) return '';
-                
-                var d = k.data;  // [open, close, low, high]
-                var time = k.name;
-                var flow = flowByTime[time] || { buy: 0, sell: 0, total: 0, count: 0 };
-                var delta = flow.buy - flow.sell;
-                var buyRatio = flow.total > 0 ? Math.round(flow.buy / flow.total * 100) : 0;
-                var sellRatio = flow.total > 0 ? Math.round(flow.sell / flow.total * 100) : 0;
-                var dominant = delta > 0 ? 'BULL' : delta < 0 ? 'BEAR' : 'NEUTRAL';
-                var domColor = delta > 0 ? '#00d4aa' : delta < 0 ? '#ff4757' : '#888';
-                
-                var html = '<div style="font-weight:bold; margin-bottom:5px; color:' + domColor + ';">' + time + ' ' + dominant + '</div>';
-                html += '<div style="display:grid; grid-template-columns: auto auto; gap: 2px 12px; font-size:11px;">';
-                html += '<span style="color:#888;">O:</span><span style="text-align:right;">' + d[1] + '</span>';
-                html += '<span style="color:#888;">C:</span><span style="text-align:right;">' + d[2] + '</span>';
-                html += '<span style="color:#888;">L:</span><span style="text-align:right;">' + d[3] + '</span>';
-                html += '<span style="color:#888;">H:</span><span style="text-align:right;">' + d[4] + '</span>';
-                html += '</div>';
-                
-                if (flow.total > 0) {
-                    html += '<div style="margin-top:6px; border-top:1px solid #333; padding-top:5px;">';
-                    html += '<div style="font-weight:bold; color:#888; margin-bottom:3px; font-size:10px;">OrderFlow (' + flow.count + ')</div>';
-                    html += '<div style="display:grid; grid-template-columns: auto auto auto; gap: 2px 8px; font-size:10px;">';
-                    html += '<span style="color:#00d4aa;">Buy:</span>';
-                    html += '<span style="color:#00d4aa; text-align:right;">' + flow.buy + '</span>';
-                    html += '<span style="color:#00d4aa; text-align:right;">' + buyRatio + '%</span>';
-                    html += '<span style="color:#ff4757;">Sell:</span>';
-                    html += '<span style="color:#ff4757; text-align:right;">' + flow.sell + '</span>';
-                    html += '<span style="color:#ff4757; text-align:right;">' + sellRatio + '%</span>';
-                    html += '<span style="color:' + domColor + '; font-weight:bold;">Delta:</span>';
-                    html += '<span style="color:' + domColor + '; text-align:right; font-weight:bold;">' + (delta >= 0 ? '+' : '') + delta + '</span>';
-                    html += '<span></span>';
-                    html += '</div>';
-                    html += '</div>';
-                }
-                
-                return html;
+                var d = k.data;
+                var idx = k.dataIndex;
+                var kline = klines[idx];
+                if (!kline) return '';
+
+                var buyVol = kline.buy_vol || 0;
+                var sellVol = kline.sell_vol || 0;
+                var delta = kline.delta || 0;
+                var deltaColor = delta >= 0 ? '#00ff88' : '#ff6b6b';
+                var deltaSign = delta >= 0 ? '+' : '';
+
+                return '<div style="font-weight:bold;margin-bottom:5px;">' + k.name + '</div>' +
+                    '开盘: ' + d[1] + '  收盘: ' + d[2] + '<br/>' +
+                    '最低: ' + d[3] + '  最高: ' + d[4] + '<br/>' +
+                    '成交量: ' + (kline.volume || 0) + '<br/>' +
+                    '<div style="margin-top:5px;border-top:1px solid #333;padding-top:5px;">' +
+                    '<span style="color:#00ff88">主动买: ' + buyVol + '</span>  ' +
+                    '<span style="color:#ff6b6b">主动卖: ' + sellVol + '</span><br/>' +
+                    '净Δ: <span style="color:' + deltaColor + '">' + deltaSign + delta + '</span>' +
+                    '</div>';
             }
         }
     };
@@ -543,97 +748,413 @@ function updateChart(windowIdx, inst, period, data) {
     chart.setOption(option, true);
 }
 
+function changePeriod(windowIdx, period) {
+    windowPeriods[windowIdx] = period;
+    var win = document.getElementById('window-' + windowIdx);
+    win.querySelectorAll('.period-btn').forEach(function(btn) {
+        btn.classList.toggle('active', btn.dataset.period === period);
+    });
+    fetchKlineData(windowInstruments[windowIdx], period, windowIdx);
+}
+
+function selectWindow(idx) {
+    selectedWindow = idx;
+    document.querySelectorAll('.chart-window').forEach(function(w, i) {
+        w.classList.toggle('active', i === idx);
+    });
+
+    var inst = windowInstruments[idx];
+    if (!inst) return;
+
+    var name = ALL_INSTRUMENT_NAMES[inst] || inst;
+    document.getElementById('right-title').textContent = name;
+    document.getElementById('right-code').textContent = inst;
+
+    if (ws && isConnected) {
+        ws.send(JSON.stringify({action: 'select_window', window_idx: idx}));
+    }
+    debugLog('选中主窗口: ' + idx + ' (' + inst + ')', 'info');
+}
+
+// [FIX-2] 增强订单流更新，添加高亮动画
+function updateOrderflow(items) {
+    var list = document.getElementById('orderflow-list');
+    if (!items || items.length === 0) {
+        list.innerHTML = '<div style="text-align:center; color:#666; padding-top:50px;">暂无数据</div>';
+        return;
+    }
+
+    var buyTotal = 0, sellTotal = 0, deltaTotal = 0;
+
+    var html = items.map(function(item, idx) {
+        var cls = item.aggressor === 'BUY' ? 'buy' : item.aggressor === 'SELL' ? 'sell' : 'mix';
+        var dirText = item.aggressor === 'BUY' ? '买' : item.aggressor === 'SELL' ? '卖' : '混';
+
+        buyTotal += item.buy_vol || 0;
+        sellTotal += item.sell_vol || 0;
+        deltaTotal += item.delta || 0;
+
+        var price = (item.price || 0).toFixed(2);
+        var deltaStr = (item.delta || 0) >= 0 ? '+' + (item.delta || 0) : '' + (item.delta || 0);
+        var deltaColor = (item.delta || 0) >= 0 ? '#00d4aa' : '#ff4757';
+
+        // [FIX-2] 新数据添加高亮类（前3条认为是新数据）
+        var flashClass = idx < 3 ? ' flash-new' : '';
+
+        return '<div class="orderflow-item ' + cls + flashClass + '">' +
+            '<span class="time">' + (item.time || '--') + '</span>' +
+            '<span class="price">' + price + '</span>' +
+            '<span class="vol">' + (item.total_vol || 0) + '</span>' +
+            '<span class="buy-v">' + (item.buy_vol || 0) + '</span>' +
+            '<span class="sell-v">' + (item.sell_vol || 0) + '</span>' +
+            '<span class="delta" style="color:' + deltaColor + '">' + deltaStr + '</span>' +
+            '<span class="dir">' + dirText + '</span>' +
+            '</div>';
+    }).join('');
+
+    list.innerHTML = html;
+    list.scrollTop = 0;
+
+    document.getElementById('stat-buy').textContent = buyTotal;
+    document.getElementById('stat-sell').textContent = sellTotal;
+    var deltaEl = document.getElementById('stat-delta');
+    deltaEl.textContent = (deltaTotal >= 0 ? '+' : '') + deltaTotal;
+    deltaEl.style.color = deltaTotal >= 0 ? '#00d4aa' : '#ff4757';
+}
+
+function switchSource() {
+    var newSource = currentSource === 'mock' ? 'ctp' : 'mock';
+    debugLog('切换数据源: ' + newSource, 'info');
+
+    // 禁用按钮防止重复点击
+    var btn = document.getElementById('btnSource');
+    btn.disabled = true;
+    btn.textContent = '切换中...';
+
+    fetch(API_BASE + '/api/source?source=' + newSource, { method: 'POST' })
+        .then(function(r) { 
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json(); 
+        })
+        .then(function(data) {
+            btn.disabled = false;
+            if (data.status === 'ok') {
+                currentSource = data.source;
+                updateSourceButton();
+                debugLog('数据源已切换: ' + data.source, 'success');
+            } else if (data.status === 'error') {
+                updateSourceButton();
+                debugLog('切换失败: ' + (data.msg || '未知错误'), 'error');
+                if (data.fallback) {
+                    debugLog('已回退到: ' + data.fallback, 'warn');
+                    currentSource = data.fallback;
+                    updateSourceButton();
+                }
+            } else {
+                updateSourceButton();
+                debugLog('切换返回未知状态: ' + JSON.stringify(data), 'warn');
+            }
+        })
+        .catch(function(err) {
+            btn.disabled = false;
+            updateSourceButton();
+            debugLog('切换请求失败: ' + err.message, 'error');
+            console.error('[Switch] 错误:', err);
+        });
+}
+
+function updateSourceButton() {
+    var btn = document.getElementById('btnSource');
+    btn.textContent = currentSource === 'mock' ? 'Mock' : 'CTP';
+    btn.className = 'btn-source ' + currentSource;
+    btn.title = currentSource === 'mock' ? '点击切换到CTP' : '点击切换到Mock';
+}
+
 function connectWS() {
-    if (isConnected) return;
-    document.getElementById('conn-status').textContent = "Connecting...";
+    // [FIX] 防止重复连接
+    if (isConnected || isConnecting) {
+        debugLog("已经连接或连接中", "warn");
+        return;
+    }
+
+    // [FIX] 清理旧定时器
+    if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+    }
+    if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+    }
+
+    isConnecting = true;
+    debugLog("连接: " + WS_URL, "info");
+    document.getElementById('conn-status').textContent = "连接中...";
     document.getElementById('btnConnect').disabled = true;
 
     try {
         ws = new WebSocket(WS_URL);
+
+        // 心跳检测 - 使用全局变量
+        var lastPongTime = Date.now();
+
         ws.onopen = function() {
-            document.getElementById('conn-status').textContent = "Connected";
+            console.log('[WS] onopen 触发，readyState:', ws.readyState);
+            debugLog("WebSocket 连接成功!", "success");
+            document.getElementById('conn-status').textContent = "已连接";
             document.getElementById('conn-status').classList.add('connected');
             isConnected = true;
-            document.getElementById('btnConnect').textContent = "Connected";
-            
-            // Start auto refresh for all charts
-            INSTRUMENTS.forEach(function(inst, i) {
-                startAutoRefresh(i, inst, windowPeriods[i]);
-            });
+            isConnecting = false;  // [FIX] 连接成功
+            document.getElementById('btnConnect').textContent = "断开";
+            document.getElementById('btnConnect').disabled = false;
+
+            // 连接成功后请求最新配置（延迟100ms确保连接稳定）
+            setTimeout(function() {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    console.log('[WS] 发送 get_config');
+                    ws.send(JSON.stringify({action: 'get_config'}));
+                }
+            }, 100);
+
+            // 启动心跳检测
+            heartbeatTimer = setInterval(function() {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    var elapsed = Date.now() - lastPongTime;
+                    // 如果15秒没收到任何消息，认为连接已死，主动重连
+                    if (elapsed > 15000) {
+                        console.warn('[WS] 15秒未收到数据，连接可能已死，主动断开重连');
+                        ws.close();
+                        return;
+                    }
+                    // 如果8秒没收到消息，发送ping探测
+                    if (elapsed > 8000) {
+                        console.log('[WS] 8秒无数据，发送ping探测');
+                        ws.send(JSON.stringify({action: 'ping'}));
+                    }
+                }
+            }, 3000);
         };
+
         ws.onmessage = function(event) {
+            lastPongTime = Date.now();  // 更新最后收到消息时间
+
+            // 记录原始数据长度（用于调试）
+            if (event.data.length < 200) {
+                console.log('[WS] 收到消息:', event.data.substring(0, 100));
+            } else {
+                console.log('[WS] 收到消息，长度:', event.data.length, '前100字符:', event.data.substring(0, 100));
+            }
+
             try {
                 var data = JSON.parse(event.data);
-                if (data.type === 'update') {
-                    // Update prices
+
+                // [FIX] 显式处理pong
+                if (data.type === 'pong') {
+                    console.log('[WS] 收到pong');
+                    return;
+                }
+
+                // 调试：记录收到的消息类型
+                if (data.type) {
+                    console.log('[WS] 解析成功:', data.type, 'instruments:', Object.keys(data.instruments || {}).length, 'orderflow:', (data.selected_orderflow || []).length);
+                }
+
+                if (data.type === 'init' || data.type === 'update') {
+                    if (data.window_config) {
+                        windowMode = data.window_config.mode || windowMode;
+                        if (data.window_config.windows) {
+                            windowInstruments = data.window_config.windows;
+                        }
+                    }
+
+                    // [FIX-3] 修复价格更新逻辑：正确添加/移除class + 闪烁效果
                     if (data.instruments) {
                         for (var inst in data.instruments) {
                             var info = data.instruments[inst];
-                            var idx = INSTRUMENTS.indexOf(inst);
-                            if (idx >= 0) {
-                                var priceEl = document.getElementById('price-' + idx);
-                                if (priceEl && info.last_price) {
-                                    priceEl.textContent = info.last_price.toFixed(2);
-                                    priceEl.classList.toggle('down', info.delta < 0);
+                            for (var i = 0; i < windowMode; i++) {
+                                if (windowInstruments[i] === inst) {
+                                    var priceEl = document.getElementById('price-' + i);
+                                    if (priceEl && info.last_price !== undefined && info.last_price !== null) {
+                                        var oldPrice = lastPrices[inst];
+                                        var newPrice = parseFloat(info.last_price);
+                                        
+                                        if (isNaN(newPrice)) {
+                                            console.warn('[UI] 价格无效:', inst, info.last_price);
+                                            continue;
+                                        }
+
+                                        priceEl.textContent = newPrice.toFixed(2);
+
+                                        // [FIX-3] 正确添加/移除class
+                                        priceEl.classList.remove('down', 'up', 'flash-up', 'flash-down');
+                                        if (info.delta < 0) {
+                                            priceEl.classList.add('down');
+                                        } else if (info.delta > 0) {
+                                            priceEl.classList.add('up');
+                                        }
+
+                                        // [FIX-3] 价格变动时添加闪烁效果
+                                        if (oldPrice !== undefined && newPrice !== oldPrice) {
+                                            if (newPrice > oldPrice) {
+                                                priceEl.classList.add('flash-up');
+                                            } else {
+                                                priceEl.classList.add('flash-down');
+                                            }
+                                            setTimeout(function(el) {
+                                                return function() {
+                                                    el.classList.remove('flash-up', 'flash-down');
+                                                };
+                                            }(priceEl), 600);
+                                        }
+
+                                        lastPrices[inst] = newPrice;
+                                    }
                                 }
                             }
                         }
                     }
 
-                    // Store orderflow data for all instruments
-                    if (data.selected_orderflow && data.selected_inst) {
-                        var selInst = data.selected_inst;
-                        if (!orderflowData[selInst]) orderflowData[selInst] = [];
-                        data.selected_orderflow.forEach(function(f) {
-                            orderflowData[selInst].push(f);
-                        });
-                        if (orderflowData[selInst].length > 1000) {
-                            orderflowData[selInst] = orderflowData[selInst].slice(-1000);
-                        }
-
-                        // Update right panel
-                        var currentInst = userSelectedInst || selInst;
-                        if (selInst === currentInst) {
+                    if (data.selected_orderflow) {
+                        try {
                             updateOrderflow(data.selected_orderflow);
-                            if (data.selected_name) {
-                                document.getElementById('right-title').textContent = data.selected_name;
-                                document.getElementById('right-code').textContent = selInst;
-                            }
+                        } catch(e) {
+                            console.error('[UI] updateOrderflow 错误:', e);
                         }
                     }
+                    if (data.selected_name) {
+                        document.getElementById('right-title').textContent = data.selected_name;
+                        document.getElementById('right-code').textContent = data.selected_inst || '--';
+                    }
+                    if (data.data_source && data.data_source !== currentSource) {
+                        currentSource = data.data_source;
+                        updateSourceButton();
+                        debugLog('数据源同步: ' + data.data_source, 'info');
+                    }
+                } else if (data.type === 'source_changed') {
+                    currentSource = data.source;
+                    updateSourceButton();
+                    debugLog('数据源切换: ' + data.source + (data.reason ? ' (' + data.reason + ')' : ''), 'info');
+                } else if (data.type === 'config') {
+                    // [FIX-4] 处理配置响应
+                    if (data.data_source && data.data_source !== currentSource) {
+                        currentSource = data.data_source;
+                        updateSourceButton();
+                        debugLog('配置同步数据源: ' + data.data_source, 'info');
+                    }
+                } else if (data.type === 'ack') {
+                    debugLog('ACK: ' + data.action, 'info');
                 }
             } catch (e) {
-                console.error("WS parse error:", e);
+                debugLog("解析错误: " + e.message, "error");
+                console.error("[WS] 消息处理错误:", e, "原始数据:", event.data);
             }
         };
-        ws.onerror = function() {
-            document.getElementById('conn-status').textContent = "Error";
+
+        ws.onerror = function(err) {
+            console.error('[WS] onerror:', err);
+            isConnecting = false;  // [FIX]
+            debugLog("WebSocket 错误 (readyState:" + (ws ? ws.readyState : 'null') + ")", "error");
+            document.getElementById('conn-status').textContent = "错误";
             document.getElementById('btnConnect').disabled = false;
-            document.getElementById('btnConnect').textContent = "Retry";
         };
-        ws.onclose = function() {
-            document.getElementById('conn-status').textContent = "Disconnected";
+
+        ws.onclose = function(event) {
+            console.log('[WS] onclose:', 'code=' + event.code, 'reason=' + event.reason, 'wasClean=' + event.wasClean);
+            debugLog("连接关闭 (code:" + event.code + ", wasClean:" + event.wasClean + ")", "warn");
+            document.getElementById('conn-status').textContent = "断开";
             document.getElementById('conn-status').classList.remove('connected');
             isConnected = false;
-            userSelectedInst = null;
+            isConnecting = false;  // [FIX]
+            document.getElementById('btnConnect').textContent = "连接";
             document.getElementById('btnConnect').disabled = false;
-            document.getElementById('btnConnect').textContent = "Connect WS";
-            
-            // Stop all auto refresh
-            for (var t in refreshTimers) {
-                clearInterval(refreshTimers[t]);
+
+            // [FIX] 清理全局心跳
+            if (heartbeatTimer) {
+                clearInterval(heartbeatTimer);
+                heartbeatTimer = null;
+            }
+
+            // [FIX] 只有非正常断开才重连
+            if (!event.wasClean || event.code !== 1000) {
+                reconnectTimer = setTimeout(function() {
+                    debugLog("自动重连...", "info");
+                    connectWS();
+                }, 3000);
             }
         };
+
     } catch (e) {
-        console.error("WS connect error:", e);
+        debugLog("创建连接失败: " + e.message, "error");
         document.getElementById('btnConnect').disabled = false;
     }
 }
 
+function disconnectWS() {
+    // [FIX] 清理所有定时器
+    if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+    }
+    if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+    }
+
+    if (ws) {
+        try {
+            ws.close(1000, "手动断开");  // 正常关闭
+        } catch(e) {
+            console.error('[WS] 关闭错误:', e);
+        }
+        ws = null;
+    }
+
+    isConnected = false;
+    isConnecting = false;  // [FIX]
+    document.getElementById('conn-status').textContent = "断开";
+    document.getElementById('conn-status').classList.remove('connected');
+    document.getElementById('btnConnect').textContent = "连接";
+    document.getElementById('btnConnect').disabled = false;
+}
+
+function toggleConnection() {
+    if (isConnected) {
+        disconnectWS();
+    } else {
+        connectWS();
+    }
+}
+
+// ==================== 页面加载 ====================
+// [FIX-4] 调整初始化顺序：先获取数据源状态，再初始化布局
 document.addEventListener('DOMContentLoaded', function() {
-    var btn = document.getElementById('btnConnect');
-    if (btn) btn.addEventListener('click', connectWS);
-    initLayout();
+    debugLog('页面加载，品种库: ' + ALL_INSTRUMENTS.length + '个', 'info');
+
+    var btnConnect = document.getElementById('btnConnect');
+    if (btnConnect) btnConnect.addEventListener('click', toggleConnection);
+
+    var btnSource = document.getElementById('btnSource');
+    if (btnSource) btnSource.addEventListener('click', switchSource);
+
+    // [FIX-4] 先获取数据源状态，确保初始化时状态正确
+    fetch(API_BASE + '/api/source')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            currentSource = data.source || 'mock';
+            updateSourceButton();
+            debugLog('数据源状态: ' + currentSource, 'info');
+
+            // 状态获取后再初始化布局
+            initLayout();
+            // 延迟连接WebSocket，确保布局已渲染
+            setTimeout(connectWS, 500);
+        })
+        .catch(function(err) {
+            debugLog('获取数据源状态失败: ' + err.message, 'warn');
+            updateSourceButton();
+            initLayout();
+            setTimeout(connectWS, 500);
+        });
 });
 </script>
 </body>
