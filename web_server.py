@@ -26,10 +26,11 @@ from datetime import datetime, timedelta
 from collections import deque, defaultdict, OrderedDict
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+import duckdb  # [DuckDB] 嵌入式数据库
 import uvicorn
 
 # ============ 加载环境变量 ============
@@ -178,6 +179,421 @@ class OrderFlowCalculator:
 
 
 # ============ CSV 存储管理器（线程安全） ============
+
+# ============ DuckDB 存储管理器（替换 CSVManager）============
+class DuckDBManager:
+    """使用 DuckDB 嵌入式数据库存储 Tick 和 K 线数据
+
+    优势:
+    - 列式存储+自动压缩，磁盘空间比 CSV 省 70-80%
+    - SQL 查询，分析性能比 CSV 快 10-100 倍
+    - 单文件，备份只需复制一个 .duckdb 文件
+    - 原生支持时间序列函数、窗口函数
+    - 一行 SQL 导出 CSV: COPY ... TO 'file.csv'
+    """
+
+    def __init__(self, data_dir=DATA_DIR):
+        self.data_dir = data_dir
+        os.makedirs(data_dir, exist_ok=True)
+        self.db_path = os.path.join(data_dir, "ctp_data.duckdb")
+
+        # 连接 DuckDB（单连接，多线程安全）
+        import duckdb
+        self.conn = duckdb.connect(self.db_path)
+        self._init_tables()
+        print(f"[DuckDB] 数据库初始化: {os.path.abspath(self.db_path)}")
+
+    def _init_tables(self):
+        """创建表结构（如果不存在）"""
+        # Tick 原始数据表
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS ticks (
+                id BIGINT PRIMARY KEY,
+                timestamp TIMESTAMP,
+                date_str VARCHAR(8),
+                instrument VARCHAR(20),
+                price DOUBLE,
+                volume INT,
+                buy_vol INT,
+                sell_vol INT,
+                delta INT,
+                bid DOUBLE,
+                ask DOUBLE,
+                bid_vol INT,
+                ask_vol INT,
+                aggressor VARCHAR(4),
+                total_volume BIGINT
+            )
+        """)
+
+        # K 线数据表
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS klines (
+                id BIGINT PRIMARY KEY,
+                timestamp TIMESTAMP,
+                date_str VARCHAR(8),
+                instrument VARCHAR(20),
+                period VARCHAR(5),
+                open DOUBLE,
+                high DOUBLE,
+                low DOUBLE,
+                close DOUBLE,
+                volume INT,
+                buy_vol INT,
+                sell_vol INT,
+                delta INT,
+                tick_count INT
+            )
+        """)
+
+        # 创建索引（加速查询）
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_ticks_inst_time ON ticks(instrument, timestamp)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_klines_inst_period_time ON klines(instrument, period, timestamp)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_ticks_date ON ticks(date_str)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_klines_date ON klines(date_str)")
+
+        # 创建序列用于自增ID
+        self.conn.execute("CREATE SEQUENCE IF NOT EXISTS seq_tick_id START 1")
+        self.conn.execute("CREATE SEQUENCE IF NOT EXISTS seq_kline_id START 1")
+
+    def save_tick(self, inst, tick):
+        """保存单条 Tick（自动事务，无需手动 flush）"""
+        try:
+            self.conn.execute("""
+                INSERT INTO ticks 
+                (id, timestamp, date_str, instrument, price, volume, buy_vol, sell_vol, delta, 
+                 bid, ask, bid_vol, ask_vol, aggressor, total_volume)
+                VALUES (
+                    nextval('seq_tick_id'),
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?
+                )
+            """, [
+                self._parse_time(tick.get("time", "")),
+                datetime.now().strftime("%Y%m%d"),
+                tick.get("instrument", inst),
+                tick.get("price", 0),
+                tick.get("total_vol", 0),
+                tick.get("buy_vol", 0),
+                tick.get("sell_vol", 0),
+                tick.get("delta", 0),
+                tick.get("bid", 0),
+                tick.get("ask", 0),
+                tick.get("bid_vol", 0),
+                tick.get("ask_vol", 0),
+                tick.get("aggressor", ""),
+                tick.get("volume_total", 0)
+            ])
+        except Exception as e:
+            print(f"[DuckDB] Tick 写入错误: {e}")
+
+    def save_kline(self, inst, period, bar):
+        """保存单根 K 线"""
+        try:
+            self.conn.execute("""
+                INSERT INTO klines 
+                (id, timestamp, date_str, instrument, period, open, high, low, close,
+                 volume, buy_vol, sell_vol, delta, tick_count)
+                VALUES (
+                    nextval('seq_kline_id'),
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?
+                )
+            """, [
+                self._parse_time(bar.get("time", "")),
+                datetime.now().strftime("%Y%m%d"),
+                inst,
+                period,
+                bar.get("open", 0),
+                bar.get("high", 0),
+                bar.get("low", 0),
+                bar.get("close", 0),
+                bar.get("volume", 0),
+                bar.get("buy_vol", 0),
+                bar.get("sell_vol", 0),
+                bar.get("delta", 0),
+                bar.get("tick_count", 1)
+            ])
+        except Exception as e:
+            print(f"[DuckDB] K线写入错误: {e}")
+
+    def load_klines(self, inst, period, limit=200):
+        """加载 K 线历史数据（替代 CSV 加载）"""
+        try:
+            result = self.conn.execute("""
+                SELECT 
+                    strftime(timestamp, '%H:%M') as time,
+                    epoch_ms(timestamp) as timestamp_ms,
+                    open, high, low, close,
+                    volume, buy_vol, sell_vol, delta, tick_count
+                FROM klines
+                WHERE instrument = ? AND period = ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+            """, [inst, period, limit]).fetchall()
+
+            # 转换为字典列表（兼容原有格式）
+            klines = []
+            for row in reversed(result):  # 反转回时间正序
+                klines.append({
+                    "time": row[0],
+                    "timestamp": row[1],
+                    "open": float(row[2]),
+                    "high": float(row[3]),
+                    "low": float(row[4]),
+                    "close": float(row[5]),
+                    "volume": int(row[6]),
+                    "buy_vol": int(row[7]),
+                    "sell_vol": int(row[8]),
+                    "delta": int(row[9]),
+                    "tick_count": int(row[10])
+                })
+            return klines
+        except Exception as e:
+            print(f"[DuckDB] K线加载错误: {e}")
+            return []
+
+    def load_ticks(self, inst, limit=500):
+        """加载 Tick 历史数据"""
+        try:
+            result = self.conn.execute("""
+                SELECT 
+                    strftime(timestamp, '%H:%M:%S') as time,
+                    '0' as millisec,
+                    instrument,
+                    price,
+                    volume as total_vol,
+                    buy_vol,
+                    sell_vol,
+                    delta,
+                    bid,
+                    ask,
+                    bid_vol,
+                    ask_vol,
+                    aggressor
+                FROM ticks
+                WHERE instrument = ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+            """, [inst, limit]).fetchall()
+
+            ticks = []
+            for row in reversed(result):
+                ticks.append({
+                    "time": row[0],
+                    "millisec": row[1],
+                    "instrument": row[2],
+                    "price": float(row[3]),
+                    "total_vol": int(row[4]),
+                    "buy_vol": int(row[5]),
+                    "sell_vol": int(row[6]),
+                    "delta": int(row[7]),
+                    "bid": float(row[8]),
+                    "ask": float(row[9]),
+                    "bid_vol": int(row[10]),
+                    "ask_vol": int(row[11]),
+                    "aggressor": row[12]
+                })
+            return ticks
+        except Exception as e:
+            print(f"[DuckDB] Tick加载错误: {e}")
+            return []
+
+    def cleanup_old_data(self, tick_days=3, kline_1m_days=60, kline_other_days=7):
+        """清理过期数据（替代 CSV 文件删除）"""
+        try:
+            now = datetime.now()
+
+            # 清理旧 Tick
+            tick_cutoff = (now - timedelta(days=tick_days)).strftime("%Y-%m-%d")
+            self.conn.execute("DELETE FROM ticks WHERE date_str < ?", [tick_cutoff.replace("-", "")])
+            tick_deleted = self.conn.execute("SELECT changes()").fetchone()[0]
+
+            # 清理旧 1m K线
+            kline_1m_cutoff = (now - timedelta(days=kline_1m_days)).strftime("%Y-%m-%d")
+            self.conn.execute("DELETE FROM klines WHERE period = '1m' AND date_str < ?", [kline_1m_cutoff.replace("-", "")])
+
+            # 清理旧其他周期 K线
+            kline_other_cutoff = (now - timedelta(days=kline_other_days)).strftime("%Y-%m-%d")
+            self.conn.execute("DELETE FROM klines WHERE period IN ('5m', '15m', '1h') AND date_str < ?", [kline_other_cutoff.replace("-", "")])
+
+            # 压缩数据库（释放空间）
+            self.conn.execute("VACUUM")
+
+            print(f"[DuckDB] 清理完成，删除 {tick_deleted} 条旧Tick，已VACUUM")
+            return tick_deleted
+        except Exception as e:
+            print(f"[DuckDB] 清理错误: {e}")
+            return 0
+
+    def export_to_csv(self, table, filepath, where_clause="", params=None):
+        """导出数据到 CSV（给外部系统用）
+
+        示例:
+            export_to_csv("ticks", "./export/ticks_20250630.csv", 
+                         "WHERE date_str = '20250630'")
+        """
+        try:
+            os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
+            query = f"COPY (SELECT * FROM {table} {where_clause}) TO '{filepath}' (HEADER, DELIMITER ',')"
+            self.conn.execute(query)
+            print(f"[DuckDB] 导出完成: {filepath}")
+            return True
+        except Exception as e:
+            print(f"[DuckDB] 导出错误: {e}")
+            return False
+
+    def query(self, sql, params=None):
+        """执行自定义 SQL 查询（给外部系统读数据用）"""
+        try:
+            if params:
+                return self.conn.execute(sql, params).fetchall()
+            else:
+                return self.conn.execute(sql).fetchall()
+        except Exception as e:
+            print(f"[DuckDB] 查询错误: {e}")
+            return []
+
+    def get_stats(self):
+        """获取数据库统计信息"""
+        try:
+            tick_count = self.conn.execute("SELECT COUNT(*) FROM ticks").fetchone()[0]
+            kline_count = self.conn.execute("SELECT COUNT(*) FROM klines").fetchone()[0]
+            db_size = os.path.getsize(self.db_path)
+            return {
+                "tick_count": tick_count,
+                "kline_count": kline_count,
+                "db_size_mb": round(db_size / 1024 / 1024, 2),
+                "db_path": self.db_path
+            }
+        except Exception as e:
+            print(f"[DuckDB] 统计错误: {e}")
+            return {}
+
+    def force_flush(self):
+        """强制刷盘（DuckDB 自动事务，无需手动 flush）"""
+        try:
+            self.conn.execute("CHECKPOINT")
+            print("[DuckDB] 强制刷盘完成")
+        except Exception as e:
+            print(f"[DuckDB] 刷盘错误: {e}")
+
+    def close(self):
+        """关闭连接"""
+        try:
+            self.conn.execute("CHECKPOINT")
+            self.conn.close()
+            print("[DuckDB] 连接已关闭")
+        except Exception as e:
+            print(f"[DuckDB] 关闭错误: {e}")
+
+    def _parse_time(self, time_str):
+        """解析时间字符串为 TIMESTAMP"""
+        try:
+            if len(time_str) == 5:  # HH:MM
+                today = datetime.now().strftime("%Y-%m-%d")
+                return f"{today} {time_str}:00"
+            elif len(time_str) == 8:  # HH:MM:SS
+                today = datetime.now().strftime("%Y-%m-%d")
+                return f"{today} {time_str}"
+            else:
+                return datetime.now()
+        except:
+            return datetime.now()
+
+
+# ============ 外部系统读数据接口 ============
+class DataReader:
+    """给外部系统用的只读接口
+
+    使用方式:
+        reader = DataReader("./data/ctp_data.duckdb")
+
+        # 查询最近100条Tick
+        ticks = reader.get_recent_ticks("rb2510", 100)
+
+        # 查询某时间段K线
+        klines = reader.get_klines_range("rb2510", "1m", "2025-06-30 09:00:00", "2025-06-30 15:00:00")
+
+        # 自定义SQL查询
+        result = reader.query("SELECT instrument, SUM(volume) FROM ticks GROUP BY instrument")
+    """
+
+    def __init__(self, db_path="./data/ctp_data.duckdb"):
+        import duckdb
+        self.conn = duckdb.connect(db_path, read_only=True)
+
+    def get_recent_ticks(self, instrument, limit=100):
+        """获取最近N条Tick"""
+        return self.conn.execute("""
+            SELECT * FROM ticks 
+            WHERE instrument = ? 
+            ORDER BY timestamp DESC 
+            LIMIT ?
+        """, [instrument, limit]).fetchdf()
+
+    def get_klines_range(self, instrument, period, start_time, end_time):
+        """获取某时间段K线"""
+        return self.conn.execute("""
+            SELECT * FROM klines 
+            WHERE instrument = ? AND period = ? 
+            AND timestamp BETWEEN ? AND ?
+            ORDER BY timestamp
+        """, [instrument, period, start_time, end_time]).fetchdf()
+
+    def get_daily_summary(self, date_str=None):
+        """获取每日汇总统计"""
+        if date_str is None:
+            date_str = datetime.now().strftime("%Y%m%d")
+        return self.conn.execute("""
+            SELECT 
+                instrument,
+                COUNT(*) as tick_count,
+                MIN(price) as min_price,
+                MAX(price) as max_price,
+                AVG(price) as avg_price,
+                SUM(volume) as total_volume,
+                SUM(delta) as net_delta
+            FROM ticks 
+            WHERE date_str = ?
+            GROUP BY instrument
+            ORDER BY tick_count DESC
+        """, [date_str]).fetchdf()
+
+    def query(self, sql, params=None):
+        """执行自定义SQL查询"""
+        if params:
+            return self.conn.execute(sql, params).fetchdf()
+        else:
+            return self.conn.execute(sql).fetchdf()
+
+    def close(self):
+        self.conn.close()
+
+
 class CSVManager:
     def __init__(self, data_dir=DATA_DIR):
         self.data_dir = data_dir
@@ -392,7 +808,7 @@ class DataStore:
         self.window_instruments = list(INSTRUMENTS)[:self.window_mode]
         self.selected_window = 0
 
-        self.csv_manager = CSVManager()
+        self.db_manager = DuckDBManager()
         self.calculators = {inst: OrderFlowCalculator() for inst in ALL_INSTRUMENTS}
         self.data_source = "mock"
 
@@ -443,7 +859,7 @@ class DataStore:
     def init_instrument_bars(self, inst):
         base = BASE_PRICES.get(inst, 3000.0)
 
-        klines_1m = self.csv_manager.load_klines(inst, "1m", limit=200)
+        klines_1m = self.db_manager.load_klines(inst, "1m", limit=200)
         if klines_1m:
             with self._lock:
                 self.klines[inst]["1m"] = klines_1m
@@ -473,7 +889,7 @@ class DataStore:
                 }
                 bars.append(bar)
                 price = close_p
-                self.csv_manager.save_kline(inst, "1m", bar)
+                self.db_manager.save_kline(inst, "1m", bar)
 
             with self._lock:
                 self.klines[inst]["1m"] = bars
@@ -485,7 +901,7 @@ class DataStore:
 
         self._calc_macd(inst, "1m")
 
-        hist_ticks = self.csv_manager.load_ticks(inst, limit=100)
+        hist_ticks = self.db_manager.load_ticks(inst, limit=100)
         if hist_ticks:
             with self._lock:
                 self.orderflow[inst].extend(hist_ticks)
@@ -533,7 +949,7 @@ class DataStore:
     def init_bars(self, source="mock"):
         print(f"初始化历史数据... 活跃品种: {len(self.active_instruments)}")
         self.data_source = source
-        self.csv_manager.cleanup_old_files()
+        self.db_manager.cleanup_old_data()
 
         for inst in self.active_instruments:
             self.init_instrument_bars(inst)
@@ -638,7 +1054,7 @@ class DataStore:
             self._access_time[inst] = time.time()
             self._access_time.move_to_end(inst)
 
-        self.csv_manager.save_tick(inst, flow)
+        self.db_manager.save_tick(inst, flow)
 
         for period_name, seconds in PERIODS.items():
             self._update_kline(inst, period_name, seconds, flow)
@@ -658,7 +1074,7 @@ class DataStore:
             if not current or current.get("time") != bar_key:
                 if current:
                     if period_name == "1m":
-                        self.csv_manager.save_kline(inst, period_name, current)
+                        self.db_manager.save_kline(inst, period_name, current)
                     self.klines[inst][period_name].append(current)
                     if len(self.klines[inst][period_name]) > 200:
                         self.klines[inst][period_name].pop(0)
@@ -723,7 +1139,7 @@ class DataStore:
         print(f"[DataStore] 数据源: {source}")
 
     def close(self):
-        self.csv_manager.close()
+        self.db_manager.close()
 
 
 store = DataStore()
@@ -1211,6 +1627,199 @@ async def api_set_source(source: str = "mock"):
 
 
 # ============ WebSocket 路由 ============
+
+# ============ 外部读取 API（只读，不修改现有功能）============
+# 这些接口供外部进程通过 HTTP 读取 DuckDB 数据
+# 使用 store.db_manager 的现有连接，无需额外配置
+
+@app.get("/api/read/last")
+async def api_read_last(
+    table: str = "ticks",
+    instrument: str = Query(default="", description="品种代码，如 rb2510"),
+    n: int = Query(default=10, ge=1, le=1000, description="读取最后N条"),
+    period: str = Query(default="", description="K线周期，如 1m/5m/15m/1h"),
+    order_by: str = Query(default="timestamp DESC", description="排序字段"),
+):
+    """
+    读取最后N条记录（通用查询接口）
+    示例:
+        /api/read/last?table=ticks&instrument=rb2510&n=10
+        /api/read/last?table=klines&instrument=rb2510&period=1m&n=20
+    """
+    try:
+        if table not in ("ticks", "klines"):
+            return {"success": False, "error": "table 必须是 ticks 或 klines"}
+        conditions = []
+        params = []
+        if instrument:
+            conditions.append("instrument = ?")
+            params.append(instrument)
+        if table == "klines" and period:
+            conditions.append("period = ?")
+            params.append(period)
+        where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+        sql = f"SELECT * FROM {table} {where_clause} ORDER BY {order_by} LIMIT {n}"
+        result = store.db_manager.conn.execute(sql, params).fetchdf()
+        data = result.to_dict(orient='records')
+        for row in data:
+            for key, val in row.items():
+                if hasattr(val, 'item'):
+                    row[key] = val.item()
+        return {"success": True, "table": table, "instrument": instrument or "all", "period": period or "all", "count": len(data), "data": data}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/read/klines")
+async def api_read_klines(
+    instrument: str = Query(..., description="品种代码，如 rb2510"),
+    period: str = Query(default="1m", description="K线周期: 1m/5m/15m/1h"),
+    limit: int = Query(default=200, ge=1, le=5000, description="返回条数"),
+    start_time: str = Query(default="", description="开始时间，如 2025-07-01 09:00:00"),
+    end_time: str = Query(default="", description="结束时间，如 2025-07-01 15:00:00"),
+):
+    """
+    读取K线数据（专用接口，返回标准格式）
+    示例:
+        /api/read/klines?instrument=rb2510&period=1m&limit=100
+        /api/read/klines?instrument=rb2510&period=5m&start_time=2025-07-01 09:00:00
+    """
+    try:
+        conditions = ["instrument = ?", "period = ?"]
+        params = [instrument, period]
+        if start_time:
+            conditions.append("timestamp >= ?")
+            params.append(start_time)
+        if end_time:
+            conditions.append("timestamp <= ?")
+            params.append(end_time)
+        where_clause = "WHERE " + " AND ".join(conditions)
+        sql = f"""
+            SELECT strftime(timestamp, '%H:%M') as time, epoch_ms(timestamp) as timestamp_ms,
+                   open, high, low, close, volume, buy_vol, sell_vol, delta, tick_count
+            FROM klines {where_clause} ORDER BY timestamp DESC LIMIT {limit}
+        """
+        result = store.db_manager.conn.execute(sql, params).fetchall()
+        klines = []
+        for row in reversed(result):
+            klines.append({"time": row[0], "timestamp": row[1], "open": float(row[2]), "high": float(row[3]),
+                           "low": float(row[4]), "close": float(row[5]), "volume": int(row[6]),
+                           "buy_vol": int(row[7]), "sell_vol": int(row[8]), "delta": int(row[9]), "tick_count": int(row[10])})
+        return {"success": True, "instrument": instrument, "period": period, "count": len(klines), "klines": klines}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/read/ticks")
+async def api_read_ticks(
+    instrument: str = Query(..., description="品种代码，如 rb2510"),
+    limit: int = Query(default=100, ge=1, le=5000, description="返回条数"),
+    start_time: str = Query(default="", description="开始时间"),
+    end_time: str = Query(default="", description="结束时间"),
+):
+    """
+    读取Tick明细
+    示例:
+        /api/read/ticks?instrument=rb2510&limit=50
+    """
+    try:
+        conditions = ["instrument = ?"]
+        params = [instrument]
+        if start_time:
+            conditions.append("timestamp >= ?")
+            params.append(start_time)
+        if end_time:
+            conditions.append("timestamp <= ?")
+            params.append(end_time)
+        where_clause = "WHERE " + " AND ".join(conditions)
+        sql = f"""
+            SELECT strftime(timestamp, '%H:%M:%S') as time, instrument, price, volume,
+                   buy_vol, sell_vol, delta, bid, ask, aggressor
+            FROM ticks {where_clause} ORDER BY timestamp DESC LIMIT {limit}
+        """
+        result = store.db_manager.conn.execute(sql, params).fetchall()
+        ticks = []
+        for row in reversed(result):
+            ticks.append({"time": row[0], "instrument": row[1], "price": float(row[2]), "volume": int(row[3]),
+                          "buy_vol": int(row[4]), "sell_vol": int(row[5]), "delta": int(row[6]),
+                          "bid": float(row[7]), "ask": float(row[8]), "aggressor": row[9]})
+        return {"success": True, "instrument": instrument, "count": len(ticks), "ticks": ticks}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/read/summary")
+async def api_read_summary(
+    date_str: str = Query(default="", description="日期，如 20250701，默认今天"),
+):
+    """
+    读取每日汇总统计
+    示例:
+        /api/read/summary
+        /api/read/summary?date_str=20250701
+    """
+    try:
+        if not date_str:
+            date_str = datetime.now().strftime("%Y%m%d")
+        tick_stats = store.db_manager.conn.execute("""
+            SELECT instrument, COUNT(*) as tick_count, MIN(price) as min_price,
+                   MAX(price) as max_price, AVG(price) as avg_price,
+                   SUM(volume) as total_volume, SUM(delta) as net_delta
+            FROM ticks WHERE date_str = ? GROUP BY instrument ORDER BY tick_count DESC
+        """, [date_str]).fetchdf()
+        kline_stats = store.db_manager.conn.execute("""
+            SELECT instrument, period, COUNT(*) as bar_count
+            FROM klines WHERE date_str = ? GROUP BY instrument, period ORDER BY instrument, period
+        """, [date_str]).fetchdf()
+        return {"success": True, "date": date_str, "tick_summary": tick_stats.to_dict(orient='records'),
+                "kline_summary": kline_stats.to_dict(orient='records')}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/read/query")
+async def api_read_query(
+    sql: str = Query(..., description="SQL 查询语句（只读，仅 SELECT）"),
+    limit: int = Query(default=1000, ge=1, le=10000, description="最大返回条数"),
+):
+    """
+    执行自定义 SQL 查询（只读，限制为 SELECT）
+    示例:
+        /api/read/query?sql=SELECT * FROM ticks WHERE instrument='rb2510' LIMIT 10
+        /api/read/query?sql=SELECT instrument, COUNT(*) FROM ticks GROUP BY instrument
+    """
+    try:
+        sql_clean = sql.strip().upper()
+        if not sql_clean.startswith("SELECT"):
+            return {"success": False, "error": "只允许 SELECT 查询"}
+        if "LIMIT" not in sql_clean:
+            sql = sql.strip().rstrip(";") + f" LIMIT {limit}"
+        result = store.db_manager.conn.execute(sql).fetchdf()
+        data = result.to_dict(orient='records')
+        for row in data:
+            for key, val in row.items():
+                if hasattr(val, 'item'):
+                    row[key] = val.item()
+        return {"success": True, "sql": sql, "count": len(data), "data": data}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/read/dbinfo")
+async def api_read_dbinfo():
+    """
+    获取数据库信息（表结构、记录数等）
+    示例:
+        /api/read/dbinfo
+    """
+    try:
+        tables = store.db_manager.conn.execute("SHOW TABLES").fetchdf()
+        tick_count = store.db_manager.conn.execute("SELECT COUNT(*) FROM ticks").fetchone()[0]
+        kline_count = store.db_manager.conn.execute("SELECT COUNT(*) FROM klines").fetchone()[0]
+        db_size = os.path.getsize(store.db_manager.db_path)
+        latest_tick = store.db_manager.conn.execute("SELECT MAX(timestamp) FROM ticks").fetchone()[0]
+        return {"success": True, "db_path": store.db_manager.db_path, "db_size_mb": round(db_size / 1024 / 1024, 2),
+                "tables": tables.to_dict(orient='records'), "tick_count": tick_count, "kline_count": kline_count,
+                "latest_tick_time": str(latest_tick) if latest_tick else None,
+                "active_instruments": list(store.active_instruments), "data_source": dsm.current}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
@@ -1381,7 +1990,7 @@ async def shutdown_event():
     print("服务关闭中...")
     engine.stop()
     ctp_engine.stop()
-    store.csv_manager.force_flush()
+    store.db_manager.force_flush()
     store.close()
     print("数据已保存，服务已关闭")
     print("=" * 60)
