@@ -732,9 +732,16 @@ function updateChart(windowIdx, inst, period, data) {
                 var deltaColor = delta >= 0 ? '#00ff88' : '#ff6b6b';
                 var deltaSign = delta >= 0 ? '+' : '';
 
+                // [FIX] OHLC索引修正: candleData = [open, close, low, high]
+                // d[0]=开盘, d[1]=收盘, d[2]=最低, d[3]=最高
+                var openPrice = (d[0] !== undefined ? d[0] : kline.open);
+                var closePrice = (d[1] !== undefined ? d[1] : kline.close);
+                var lowPrice = (d[2] !== undefined ? d[2] : kline.low);
+                var highPrice = (d[3] !== undefined ? d[3] : kline.high);
+
                 return '<div style="font-weight:bold;margin-bottom:5px;">' + k.name + '</div>' +
-                    '开盘: ' + d[1] + '  收盘: ' + d[2] + '<br/>' +
-                    '最低: ' + d[3] + '  最高: ' + d[4] + '<br/>' +
+                    '开盘: ' + openPrice.toFixed(2) + '  收盘: ' + closePrice.toFixed(2) + '<br/>' +
+                    '最低: ' + lowPrice.toFixed(2) + '  最高: ' + highPrice.toFixed(2) + '<br/>' +
                     '成交量: ' + (kline.volume || 0) + '<br/>' +
                     '<div style="margin-top:5px;border-top:1px solid #333;padding-top:5px;">' +
                     '<span style="color:#00ff88">主动买: ' + buyVol + '</span>  ' +
@@ -786,7 +793,12 @@ function updateOrderflow(items) {
 
     var buyTotal = 0, sellTotal = 0, deltaTotal = 0;
 
-    var html = items.map(function(item, idx) {
+    // [FIX] 过滤零买零卖的订单流记录（无实际成交，不显示）
+    var filteredItems = items.filter(function(item) {
+        return !((item.buy_vol || 0) === 0 && (item.sell_vol || 0) === 0);
+    });
+
+    var html = filteredItems.map(function(item, idx) {
         var cls = item.aggressor === 'BUY' ? 'buy' : item.aggressor === 'SELL' ? 'sell' : 'mix';
         var dirText = item.aggressor === 'BUY' ? '买' : item.aggressor === 'SELL' ? '卖' : '混';
 

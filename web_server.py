@@ -1474,7 +1474,9 @@ async def data_pusher():
 
                 orderflow = []
                 if main_inst and main_inst in store.active_instruments:
-                    orderflow = list(store.orderflow.get(main_inst, deque()))[-20:]
+                    # [FIX] 过滤零买零卖的订单流记录（无实际成交，不推送给前端）
+                    raw_of = list(store.orderflow.get(main_inst, deque()))
+                    orderflow = [f for f in raw_of if not ((f.get("buy_vol", 0) == 0) and (f.get("sell_vol", 0) == 0))][-20:]
 
                 data_source = dsm.current
 
@@ -1850,7 +1852,9 @@ async def websocket_endpoint(websocket: WebSocket):
             if store.selected_window < len(store.window_instruments):
                 main_inst = store.window_instruments[store.selected_window]
         if main_inst and main_inst in store.active_instruments:
-            initial_data["selected_orderflow"] = store.get_orderflow(main_inst, 20)
+            # [FIX] 过滤零买零卖的订单流记录
+            raw_of = store.get_orderflow(main_inst, 20)
+            initial_data["selected_orderflow"] = [f for f in raw_of if not ((f.get("buy_vol", 0) == 0) and (f.get("sell_vol", 0) == 0))]
             initial_data["selected_inst"] = main_inst
             initial_data["selected_name"] = INSTRUMENT_NAMES.get(main_inst, main_inst)
 
