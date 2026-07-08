@@ -214,9 +214,9 @@
         .orderflow-item {
             display: flex;
             align-items: center;
-            padding: 3px 5px;
-            margin-bottom: 2px;
-            border-radius: 4px;
+            padding: 2px 5px;  /* [FIX-UI-1] 减小padding从3px到2px，显示更多行 */
+            margin-bottom: 1px;  /* [FIX-UI-2] 减小margin从2px到1px */
+            border-radius: 3px;
             font-size: 11px;
             font-family: 'SF Mono', 'Consolas', monospace;
         }
@@ -404,6 +404,11 @@
                 <div class="row">
                     <span class="label">净Δ:</span>
                     <span class="value" id="stat-delta">0</span>
+                </div>
+                <!-- [FIX-UI-3] 新增订单流统计信息 -->
+                <div class="row" style="margin-top:4px; border-top:1px solid #2a3040; padding-top:4px;">
+                    <span class="label" id="of-stat-label">显示: 0条</span>
+                    <span class="value" id="of-time-range" style="font-size:9px; color:#666;">--</span>
                 </div>
             </div>
         </div>
@@ -732,16 +737,9 @@ function updateChart(windowIdx, inst, period, data) {
                 var deltaColor = delta >= 0 ? '#00ff88' : '#ff6b6b';
                 var deltaSign = delta >= 0 ? '+' : '';
 
-                // [FIX] OHLC索引修正: candleData = [open, close, low, high]
-                // d[0]=开盘, d[1]=收盘, d[2]=最低, d[3]=最高
-                var openPrice = (d[0] !== undefined ? d[0] : kline.open);
-                var closePrice = (d[1] !== undefined ? d[1] : kline.close);
-                var lowPrice = (d[2] !== undefined ? d[2] : kline.low);
-                var highPrice = (d[3] !== undefined ? d[3] : kline.high);
-
                 return '<div style="font-weight:bold;margin-bottom:5px;">' + k.name + '</div>' +
-                    '开盘: ' + openPrice.toFixed(2) + '  收盘: ' + closePrice.toFixed(2) + '<br/>' +
-                    '最低: ' + lowPrice.toFixed(2) + '  最高: ' + highPrice.toFixed(2) + '<br/>' +
+                    '开盘: ' + d[1] + '  收盘: ' + d[2] + '<br/>' +
+                    '最低: ' + d[3] + '  最高: ' + d[4] + '<br/>' +
                     '成交量: ' + (kline.volume || 0) + '<br/>' +
                     '<div style="margin-top:5px;border-top:1px solid #333;padding-top:5px;">' +
                     '<span style="color:#00ff88">主动买: ' + buyVol + '</span>  ' +
@@ -793,12 +791,7 @@ function updateOrderflow(items) {
 
     var buyTotal = 0, sellTotal = 0, deltaTotal = 0;
 
-    // [FIX] 过滤零买零卖的订单流记录（无实际成交，不显示）
-    var filteredItems = items.filter(function(item) {
-        return !((item.buy_vol || 0) === 0 && (item.sell_vol || 0) === 0);
-    });
-
-    var html = filteredItems.map(function(item, idx) {
+    var html = items.map(function(item, idx) {
         var cls = item.aggressor === 'BUY' ? 'buy' : item.aggressor === 'SELL' ? 'sell' : 'mix';
         var dirText = item.aggressor === 'BUY' ? '买' : item.aggressor === 'SELL' ? '卖' : '混';
 
@@ -832,6 +825,18 @@ function updateOrderflow(items) {
     var deltaEl = document.getElementById('stat-delta');
     deltaEl.textContent = (deltaTotal >= 0 ? '+' : '') + deltaTotal;
     deltaEl.style.color = deltaTotal >= 0 ? '#00d4aa' : '#ff4757';
+
+    // [FIX-UI-4] 更新订单流统计信息（条数和时间范围）
+    var ofStatLabel = document.getElementById('of-stat-label');
+    var ofTimeRange = document.getElementById('of-time-range');
+    if (ofStatLabel) {
+        ofStatLabel.textContent = '显示: ' + filteredItems.length + '条';
+    }
+    if (ofTimeRange && filteredItems.length > 0) {
+        var firstTime = filteredItems[filteredItems.length - 1].time || '--';
+        var lastTime = filteredItems[0].time || '--';
+        ofTimeRange.textContent = firstTime + ' ~ ' + lastTime;
+    }
 }
 
 function switchSource() {
@@ -1031,6 +1036,17 @@ function connectWS() {
                             updateOrderflow(data.selected_orderflow);
                         } catch(e) {
                             console.error('[UI] updateOrderflow 错误:', e);
+                        }
+                    }
+                    // [FIX-UI-5] 接收后端推送的订单流统计信息
+                    if (data.orderflow_stats) {
+                        var ofStatLabel = document.getElementById('of-stat-label');
+                        var ofTimeRange = document.getElementById('of-time-range');
+                        if (ofStatLabel) {
+                            ofStatLabel.textContent = '显示: ' + data.orderflow_stats.count + '条 (最多' + data.orderflow_stats.max_display + '条)';
+                        }
+                        if (ofTimeRange && data.orderflow_stats.time_range) {
+                            ofTimeRange.textContent = data.orderflow_stats.time_range;
                         }
                     }
                     if (data.selected_name) {

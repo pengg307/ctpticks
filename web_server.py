@@ -1038,6 +1038,9 @@ class DataStore:
         if inst not in self.active_instruments:
             return
 
+        # [FIX-DATA-1] 非交易时间的数据不存入数据库（但保留在内存供显示）
+        is_trading = is_trading_time()
+
         calc = self.calculators.get(inst)
         if not calc:
             calc = OrderFlowCalculator()
@@ -1049,15 +1052,21 @@ class DataStore:
 
         with self._lock:
             self.last_ticks[inst] = flow
-            self.orderflow[inst].append(flow)
+            # [FIX-DATA-2] 非交易时间的数据不入订单流队列（避免污染）
+            if is_trading:
+                self.orderflow[inst].append(flow)
             self.tick_count += 1
             self._access_time[inst] = time.time()
             self._access_time.move_to_end(inst)
 
-        self.db_manager.save_tick(inst, flow)
+        # [FIX-DATA-3] 非交易时间的数据不存入DuckDB数据库
+        if is_trading:
+            self.db_manager.save_tick(inst, flow)
 
-        for period_name, seconds in PERIODS.items():
-            self._update_kline(inst, period_name, seconds, flow)
+        # [FIX-DATA-4] 非交易时间不更新K线（避免K线出现断层/跳变）
+        if is_trading:
+            for period_name, seconds in PERIODS.items():
+                self._update_kline(inst, period_name, seconds, flow)
 
     def _update_kline(self, inst, period_name, seconds, flow):
         now = datetime.now()
@@ -1112,7 +1121,7 @@ class DataStore:
         return bars[-100:]
 
     # [FIX] 防御性处理：如果品种不存在，返回空列表
-    def get_orderflow(self, inst, n=30):
+    def get_orderflow(self, inst, n=150):
         with self._lock:
             if inst not in self.orderflow:
                 return []
@@ -1153,10 +1162,22 @@ class MockEngine:
         self.running = False
 
     def generate_tick(self, inst):
-        base = self.prices.get(inst, BASE_PRICES.get(inst, 3000.0))
-        change = random.gauss(0, base * 0.001)
+        # [FIX-MOCK-1] 非交易时间不生成Mock数据，避免污染真实数据
+        if not is_trading_time():
+            return None
+
+        # [FIX-MOCK-2] 使用last_price作为基准（如果有CTP真实价格），否则用base_price
+        last_real_price = store.last_ticks.get(inst, {}).get("price")
+        if last_real_price and last_real_price > 0:
+            base = last_real_price
+        else:
+            base = self.prices.get(inst, BASE_PRICES.get(inst, 3000.0))
+
+        # [FIX-MOCK-3] 价格波动限制在±0.1%以内，避免与真实数据差距过大
+        change = random.gauss(0, base * 0.0005)  # 缩小波动率从0.1%到0.05%
         price = round(base + change, 2)
-        price = max(BASE_PRICES.get(inst, 3000.0) * 0.97, min(BASE_PRICES.get(inst, 3000.0) * 1.03, price))
+        # [FIX-MOCK-4] 限制价格在真实价格±1%范围内
+        price = max(base * 0.99, min(base * 1.01, price))
         self.prices[inst] = price
 
         vol = random.randint(1, 50) if random.random() > 0.3 else 0
@@ -1186,7 +1207,9 @@ class MockEngine:
                         self.prices[inst] = BASE_PRICES.get(inst, 3000.0)
                         self.volumes[inst] = 0
                     tick = self.generate_tick(inst)
-                    store.update_tick(inst, tick)
+                    # [FIX-MOCK-5] 过滤非交易时间返回的None
+                    if tick is not None:
+                        store.update_tick(inst, tick)
                 time.sleep(0.5)
         threading.Thread(target=run, daemon=True).start()
 
@@ -1474,21 +1497,33 @@ async def data_pusher():
 
                 orderflow = []
                 if main_inst and main_inst in store.active_instruments:
-                    # [FIX] 过滤零买零卖的订单流记录（无实际成交，不推送给前端）
-                    raw_of = list(store.orderflow.get(main_inst, deque()))
-                    orderflow = [f for f in raw_of if not ((f.get("buy_vol", 0) == 0) and (f.get("sell_vol", 0) == 0))][-20:]
+                    orderflow = list(store.orderflow.get(main_inst, deque()))[-150:]
 
                 data_source = dsm.current
+
+            # [FIX-OF-4] 计算订单流统计信息
+            of_count = len(orderflow)
+            of_time_range = ""
+            if orderflow and len(orderflow) > 0:
+                first_time = orderflow[0].get("time", "--")
+                last_time = orderflow[-1].get("time", "--")
+                of_time_range = first_time + " ~ " + last_time
 
             data = {
                 "type": "update",
                 "timestamp": int(time.time() * 1000),
                 "instruments": {},
-                "selected_orderflow": [],
+                "selected_orderflow": orderflow,
                 "selected_inst": main_inst,
                 "selected_name": INSTRUMENT_NAMES.get(main_inst, main_inst) if main_inst else "--",
                 "window_config": window_config,
                 "data_source": data_source,
+                # [FIX-OF-5] 新增订单流统计信息
+                "orderflow_stats": {
+                    "count": of_count,
+                    "time_range": of_time_range,
+                    "max_display": 150
+                }
             }
 
             for inst in active_insts:
@@ -1500,8 +1535,9 @@ async def data_pusher():
                         "delta": tick["delta"],
                     }
 
-            if main_inst and main_inst in active_insts:
-                data["selected_orderflow"] = orderflow
+            # [FIX-OF-6] orderflow 已在上面赋值，无需重复
+            # if main_inst and main_inst in active_insts:
+            #     data["selected_orderflow"] = orderflow
 
             inst_count = len(data["instruments"])
             of_count = len(data["selected_orderflow"])
@@ -1852,9 +1888,7 @@ async def websocket_endpoint(websocket: WebSocket):
             if store.selected_window < len(store.window_instruments):
                 main_inst = store.window_instruments[store.selected_window]
         if main_inst and main_inst in store.active_instruments:
-            # [FIX] 过滤零买零卖的订单流记录
-            raw_of = store.get_orderflow(main_inst, 20)
-            initial_data["selected_orderflow"] = [f for f in raw_of if not ((f.get("buy_vol", 0) == 0) and (f.get("sell_vol", 0) == 0))]
+            initial_data["selected_orderflow"] = store.get_orderflow(main_inst, 150)
             initial_data["selected_inst"] = main_inst
             initial_data["selected_name"] = INSTRUMENT_NAMES.get(main_inst, main_inst)
 
