@@ -366,6 +366,24 @@
             .orderflow-item .delta { width: 40px; }
         }
 
+        /* [FIX-GRID] 面板拖拽调整高度 */
+        .grid-drag-handle {
+            position: absolute;
+            left: 10%;
+            right: 6%;
+            height: 6px;
+            z-index: 100;
+            cursor: row-resize;
+            background: transparent;
+            transition: background 0.2s;
+        }
+        .grid-drag-handle:hover {
+            background: rgba(0, 212, 170, 0.3);
+        }
+        .grid-drag-handle.dragging {
+            background: rgba(0, 212, 170, 0.6);
+        }
+
         ::-webkit-scrollbar { width: 4px; height: 4px; }
         ::-webkit-scrollbar-track { background: #0a0e1a; }
         ::-webkit-scrollbar-thumb { background: #2a3040; border-radius: 2px; }
@@ -454,6 +472,14 @@ let heartbeatTimer = null;  // [FIX] 全局心跳定时器
 let isConnecting = false;   // [FIX] 防止重复连接
 // [FIX-3] 记录上次价格用于判断涨跌
 let lastPrices = {};
+// [FIX-SCROLL] 订单流滚动控制状态
+let ofUserScrolled = false;       // 用户是否手动上滚
+let ofAutoReturnTimer = null;     // 自动回底定时器
+let ofLastItemTime = "";          // 上次最后一条数据的时间戳
+
+// [FIX-GRID] 面板高度调整状态
+const DEFAULT_GRID_RATIOS = [0.55, 0.22, 0.23];  // K线/成交量/Delta/MACD
+let gridRatios = {};  // 每个窗口的 grid 比例: { "0_1m": [0.5, 0.18, 0.14, 0.18] }
 
 // ==================== 工具函数 ====================
 function debugLog(msg, type) {
@@ -564,30 +590,29 @@ function initLayout() {
     leftSection.appendChild(col2);
 
     for (var i = 0; i < windowMode; i++) {
-        var win = document.getElementById('window-' + i);
+        (function(idx) {
+            var win = document.getElementById('window-' + idx);
+            if (!win) return;
 
-        win.addEventListener('click', (function(idx) {
-            return function(e) {
-                if (e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION' || e.target.classList.contains('period-btn')) return;
+            win.addEventListener('click', function(e) {
+                if (e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION' || e.target.classList.contains('period-btn') || e.target.classList.contains('grid-drag-handle')) return;
                 selectWindow(idx);
-            };
-        })(i));
+            });
 
-        var select = win.querySelector('.inst-select');
-        select.addEventListener('change', (function(idx) {
-            return function(e) {
-                changeWindowInstrument(idx, e.target.value);
-            };
-        })(i));
+            var select = win.querySelector('.inst-select');
+            if (select) {
+                select.addEventListener('change', function(e) {
+                    changeWindowInstrument(idx, e.target.value);
+                });
+            }
 
-        win.querySelectorAll('.period-btn').forEach(function(btn) {
-            btn.addEventListener('click', (function(idx, period) {
-                return function(e) {
+            win.querySelectorAll('.period-btn').forEach(function(btn) {
+                btn.addEventListener('click', function(e) {
                     e.stopPropagation();
-                    changePeriod(idx, period);
-                };
-            })(i, btn.dataset.period));
-        });
+                    changePeriod(idx, btn.dataset.period);
+                });
+            });
+        })(i);
     }
 
     setTimeout(function() {
@@ -611,9 +636,142 @@ function initChart(windowIdx, inst) {
         charts[windowIdx] = chart;
         fetchKlineData(inst, windowPeriods[windowIdx] || '1m', windowIdx);
         window.addEventListener('resize', function() { chart.resize(); });
+        // [FIX-GRID] 初始化拖拽手柄
+        setTimeout(function() { createGridDragHandles(windowIdx); }, 500);
     } catch (e) {
         debugLog("图表初始化失败 " + windowIdx + ": " + e.message, "error");
     }
+}
+
+// [FIX-GRID] 创建面板拖拽手柄
+function createGridDragHandles(windowIdx) {
+    var container = document.getElementById('chart-' + windowIdx);
+    if (!container) return;
+
+    // 移除旧的手柄
+    var oldHandles = container.querySelectorAll('.grid-drag-handle');
+    oldHandles.forEach(function(h) { h.remove(); });
+
+    // 创建 2 个拖拽手柄（在 3 个面板之间）
+    for (var i = 0; i < 2; i++) {
+        var handle = document.createElement('div');
+        handle.className = 'grid-drag-handle';
+        handle.dataset.handleIndex = i;
+        handle.dataset.windowIdx = windowIdx;
+
+        // 初始位置（稍后由 updateDragHandlePositions 更新）
+        handle.style.left = '10%';
+        handle.style.right = '6%';
+        handle.style.top = '0%';
+
+        container.appendChild(handle);
+
+        // 绑定拖拽事件
+        handle.addEventListener('mousedown', onDragHandleMouseDown);
+    }
+
+    updateDragHandlePositions(windowIdx);
+}
+
+// [FIX-GRID] 更新拖拽手柄位置
+function updateDragHandlePositions(windowIdx) {
+    var container = document.getElementById('chart-' + windowIdx);
+    if (!container) return;
+
+    var chart = charts[windowIdx];
+    if (!chart) return;
+
+    var option = chart.getOption();
+    if (!option || !option.grid) return;
+
+    var handles = container.querySelectorAll('.grid-drag-handle');
+    var containerHeight = container.clientHeight;
+
+    handles.forEach(function(handle, i) {
+        var grid = option.grid[i];
+        if (!grid) return;
+
+        var top = parseFloat(grid.top) || 0;
+        var height = parseFloat(grid.height) || 0;
+        var bottom = top + height;
+
+        handle.style.top = bottom + '%';
+    });
+}
+
+// [FIX-GRID] 拖拽事件处理
+var dragState = null;
+
+function onDragHandleMouseDown(e) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    var handle = e.currentTarget;
+    var windowIdx = parseInt(handle.dataset.windowIdx);
+    var handleIdx = parseInt(handle.dataset.handleIndex);
+    var container = document.getElementById('chart-' + windowIdx);
+
+    dragState = {
+        windowIdx: windowIdx,
+        handleIdx: handleIdx,
+        startY: e.clientY,
+        containerHeight: container.clientHeight,
+        startRatios: (gridRatios[windowIdx + '_' + (windowPeriods[windowIdx] || '1m')] || DEFAULT_GRID_RATIOS.slice()).slice()
+    };
+
+    handle.classList.add('dragging');
+    document.addEventListener('mousemove', onDragHandleMouseMove);
+    document.addEventListener('mouseup', onDragHandleMouseUp);
+}
+
+function onDragHandleMouseMove(e) {
+    if (!dragState) return;
+
+    var deltaY = e.clientY - dragState.startY;
+    var deltaRatio = deltaY / dragState.containerHeight;
+
+    var ratios = dragState.startRatios.slice();
+    var idx = dragState.handleIdx;
+
+    // 调整相邻两个面板的比例
+    ratios[idx] += deltaRatio;
+    ratios[idx + 1] -= deltaRatio;
+
+    // 限制最小高度 5%
+    var minRatio = 0.05;
+    if (ratios[idx] < minRatio) {
+        ratios[idx + 1] += ratios[idx] - minRatio;
+        ratios[idx] = minRatio;
+    }
+    if (ratios[idx + 1] < minRatio) {
+        ratios[idx] += ratios[idx + 1] - minRatio;
+        ratios[idx + 1] = minRatio;
+    }
+
+    // 保存比例
+    var key = dragState.windowIdx + '_' + (windowPeriods[dragState.windowIdx] || '1m');
+    gridRatios[key] = ratios;
+
+    // 更新图表
+    var chart = charts[dragState.windowIdx];
+    if (chart) {
+        chart.setOption({ grid: getChartGrids(dragState.windowIdx) });
+        updateDragHandlePositions(dragState.windowIdx);
+    }
+}
+
+function onDragHandleMouseUp(e) {
+    if (!dragState) return;
+
+    var container = document.getElementById('chart-' + dragState.windowIdx);
+    if (container) {
+        var handles = container.querySelectorAll('.grid-drag-handle');
+        handles.forEach(function(h) { h.classList.remove('dragging'); });
+    }
+
+    dragState = null;
+    document.removeEventListener('mousemove', onDragHandleMouseMove);
+    document.removeEventListener('mouseup', onDragHandleMouseUp);
 }
 
 function fetchKlineData(inst, period, windowIdx) {
@@ -626,6 +784,8 @@ function fetchKlineData(inst, period, windowIdx) {
                 return;
             }
             updateChart(windowIdx, inst, period, data);
+            // [FIX-GRID] 更新拖拽手柄位置
+            setTimeout(function() { updateDragHandlePositions(windowIdx); }, 100);
         })
         .catch(function(err) {
             debugLog("获取K线失败 " + inst + ": " + err.message, "error");
@@ -647,42 +807,29 @@ function updateChart(windowIdx, inst, period, data) {
     var dates = klines.map(function(k) { return k.time; });
     var candleData = klines.map(function(k) { return [k.open, k.close, k.low, k.high]; });
 
-    var volumes = klines.map(function(k) {
-        var delta = k.delta || 0;
-        var color;
-        if (delta > 0) color = '#00ff88';
-        else if (delta < 0) color = '#ff6b6b';
-        else color = '#666666';
-        return { value: k.volume, itemStyle: { color: color } };
+    // 堆叠成交量: buy_vol 在下, sell_vol 在上
+    var buyVolumes = klines.map(function(k) {
+        return { value: k.buy_vol || 0, itemStyle: { color: '#00d4aa' } };
     });
-
-    var deltaData = klines.map(function(k) {
-        var d = k.delta || 0;
-        return { value: Math.abs(d), itemStyle: { color: d >= 0 ? '#00ff88' : '#ff6b6b' } };
+    var sellVolumes = klines.map(function(k) {
+        return { value: k.sell_vol || 0, itemStyle: { color: '#ff4757' } };
     });
 
     var option = {
         backgroundColor: 'transparent',
         animation: false,
-        grid: [
-            { left: '10%', right: '6%', top: '8%', height: '42%' },
-            { left: '10%', right: '6%', top: '52%', height: '14%' },
-            { left: '10%', right: '6%', top: '68%', height: '12%' },
-            { left: '10%', right: '6%', top: '82%', height: '14%' }
-        ],
+        grid: getChartGrids(windowIdx),
         xAxis: [
             { type: 'category', data: dates, gridIndex: 0, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { color: '#666', fontSize: 9 } },
             { type: 'category', data: dates, gridIndex: 1, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { show: false } },
-            { type: 'category', data: dates, gridIndex: 2, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { show: false } },
-            { type: 'category', data: dates, gridIndex: 3, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { color: '#666', fontSize: 9 } }
+            { type: 'category', data: dates, gridIndex: 2, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { color: '#666', fontSize: 9 } }
         ],
         yAxis: [
             { scale: true, gridIndex: 0, splitLine: { lineStyle: { color: '#1a1f2e' } }, axisLabel: { color: '#888', fontSize: 9 } },
             { scale: true, gridIndex: 1, splitLine: { show: false }, axisLabel: { show: false } },
-            { scale: true, gridIndex: 2, splitLine: { show: false }, axisLabel: { show: false } },
-            { scale: true, gridIndex: 3, splitLine: { lineStyle: { color: '#1a1f2e' } }, axisLabel: { color: '#888', fontSize: 9 } }
+            { scale: true, gridIndex: 2, splitLine: { lineStyle: { color: '#1a1f2e' } }, axisLabel: { color: '#888', fontSize: 9 } }
         ],
-        dataZoom: [{ type: 'inside', xAxisIndex: [0,1,2,3], start: 50, end: 100 }],
+        dataZoom: [{ type: 'inside', xAxisIndex: [0,1,2], start: 50, end: 100 }],
         series: [
             {
                 name: 'K线', type: 'candlestick',
@@ -693,26 +840,31 @@ function updateChart(windowIdx, inst, period, data) {
                 }
             },
             {
-                name: '成交量', type: 'bar',
-                xAxisIndex: 1, yAxisIndex: 1, data: volumes, barWidth: '60%'
+                name: '主动买', type: 'bar', stack: 'volume',
+                xAxisIndex: 1, yAxisIndex: 1, data: buyVolumes, barWidth: '60%'
             },
             {
-                name: 'Delta', type: 'bar',
-                xAxisIndex: 2, yAxisIndex: 2, data: deltaData, barWidth: '50%'
+                name: '主动卖', type: 'bar', stack: 'volume',
+                xAxisIndex: 1, yAxisIndex: 1, data: sellVolumes, barWidth: '60%'
             },
             {
-                name: 'DIF', type: 'line', xAxisIndex: 3, yAxisIndex: 3,
-                data: macd.dif || [], smooth: true, showSymbol: false,
-                lineStyle: { color: '#f1c40f', width: 1 }
+                name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2,
+                data: (macd.dif || []).map(function(v) { return v === null || v === undefined ? null : v; }),
+                smooth: true, showSymbol: false,
+                lineStyle: { color: '#f1c40f', width: 1 },
+                connectNulls: false
             },
             {
-                name: 'DEA', type: 'line', xAxisIndex: 3, yAxisIndex: 3,
-                data: macd.dea || [], smooth: true, showSymbol: false,
-                lineStyle: { color: '#3498db', width: 1 }
+                name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2,
+                data: (macd.dea || []).map(function(v) { return v === null || v === undefined ? null : v; }),
+                smooth: true, showSymbol: false,
+                lineStyle: { color: '#3498db', width: 1 },
+                connectNulls: false
             },
             {
-                name: 'MACD', type: 'bar', xAxisIndex: 3, yAxisIndex: 3,
+                name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2,
                 data: (macd.macd || []).map(function(v) {
+                    if (v === null || v === undefined) return null;
                     return { value: v, itemStyle: { color: v >= 0 ? '#00d4aa' : '#ff4757' } };
                 }),
                 barWidth: '40%'
@@ -724,11 +876,17 @@ function updateChart(windowIdx, inst, period, data) {
             borderColor: '#2a3040',
             textStyle: { color: '#e0e0e0', fontSize: 11 },
             formatter: function(params) {
-                var k = params[0];
+                var k = null;
+                for (var p = 0; p < params.length; p++) {
+                    if (params[p] && params[p].seriesType === 'candlestick') {
+                        k = params[p];
+                        break;
+                    }
+                }
                 if (!k || !k.data) return '';
                 var d = k.data;
                 var idx = k.dataIndex;
-                var kline = klines[idx];
+                var kline = chart.__klines ? chart.__klines[idx] : null;
                 if (!kline) return '';
 
                 var buyVol = kline.buy_vol || 0;
@@ -750,7 +908,32 @@ function updateChart(windowIdx, inst, period, data) {
         }
     };
 
+    chart.__klines = klines.slice();
     chart.setOption(option, true);
+}
+
+// [FIX-GRID] 获取图表的 grid 配置 (3 panels: K线 / 堆叠成交量 / MACD)
+function getChartGrids(windowIdx) {
+    var key = windowIdx + '_' + (windowPeriods[windowIdx] || '1m');
+    var ratios = gridRatios[key] || DEFAULT_GRID_RATIOS.slice();
+    var total = ratios.reduce(function(a, b) { return a + b; }, 0);
+    var normalized = ratios.map(function(r) { return r / total; });
+
+    var top = 8;  // 顶部留白 8%
+    var available = 84;  // 可用高度 84% (100% - 8% top - 8% bottom)
+    var grids = [];
+
+    for (var i = 0; i < 3; i++) {
+        var height = normalized[i] * available;
+        grids.push({
+            left: '10%',
+            right: '6%',
+            top: top + '%',
+            height: height + '%'
+        });
+        top += height;
+    }
+    return grids;
 }
 
 function changePeriod(windowIdx, period) {
@@ -775,6 +958,19 @@ function selectWindow(idx) {
     document.getElementById('right-title').textContent = name;
     document.getElementById('right-code').textContent = inst;
 
+    // [FIX-SCROLL] 切换品种时重置订单流滚动状态
+    ofUserScrolled = false;
+    ofLastItemTime = "";
+    if (ofAutoReturnTimer) {
+        clearTimeout(ofAutoReturnTimer);
+        ofAutoReturnTimer = null;
+    }
+    // 清空订单流列表，等待新品种的推送数据
+    var list = document.getElementById('orderflow-list');
+    if (list) {
+        list.innerHTML = '<div style="text-align:center; color:#666; padding-top:50px;">加载中...</div>';
+    }
+
     if (ws && isConnected) {
         ws.send(JSON.stringify({action: 'select_window', window_idx: idx}));
     }
@@ -785,13 +981,66 @@ function selectWindow(idx) {
 function updateOrderflow(items) {
     var list = document.getElementById('orderflow-list');
     if (!items || items.length === 0) {
-        list.innerHTML = '<div style="text-align:center; color:#666; padding-top:50px;">暂无数据</div>';
+        if (list.children.length === 0) {
+            list.innerHTML = '<div style="text-align:center; color:#666; padding-top:50px;">暂无数据</div>';
+        }
         return;
     }
 
-    var buyTotal = 0, sellTotal = 0, deltaTotal = 0;
+    // [FIX-FILTER] 过滤掉 buy_vol=0 且 sell_vol=0 的无意义数据
+    var filteredItems = items.filter(function(item) {
+        return (item.buy_vol || 0) > 0 || (item.sell_vol || 0) > 0;
+    });
 
-    var html = items.map(function(item, idx) {
+    if (filteredItems.length === 0) {
+        return;
+    }
+
+    // [FIX-SCROLL] 追加模式：只添加真正的新数据，保留已有历史
+    // 获取当前列表中已有的时间戳集合（用于去重）
+    var existingTimes = {};
+    var children = list.querySelectorAll('.orderflow-item');
+    for (var i = 0; i < children.length; i++) {
+        var timeEl = children[i].querySelector('.time');
+        if (timeEl) {
+            existingTimes[timeEl.textContent] = true;
+        }
+    }
+
+    // 过滤出真正的新数据（不在已有列表中的）
+    var newItems = filteredItems.filter(function(item) {
+        return !existingTimes[item.time || ''];
+    });
+
+    if (newItems.length === 0) {
+        return; // 没有新数据，不做任何更新
+    }
+
+    // 清除"暂无数据"提示（如果存在）
+    if (list.children.length === 1 && list.children[0].textContent.indexOf('暂无') >= 0) {
+        list.innerHTML = '';
+    }
+
+    // 计算统计（基于全部可见数据）
+    var buyTotal = 0, sellTotal = 0, deltaTotal = 0;
+    var allItems = [];
+
+    // 收集已有数据
+    for (var i = 0; i < children.length; i++) {
+        var buyV = parseInt(children[i].querySelector('.buy-v').textContent) || 0;
+        var sellV = parseInt(children[i].querySelector('.sell-v').textContent) || 0;
+        var deltaV = parseInt(children[i].querySelector('.delta').textContent) || 0;
+        buyTotal += buyV;
+        sellTotal += sellV;
+        deltaTotal += deltaV;
+    }
+
+    // [FIX-SCROLL] 获取当前最后一条可见数据的时间，用于判断哪些是"新"数据
+    var currentLastTime = ofLastItemTime;
+
+    // 追加新数据到列表底部
+    var fragment = document.createDocumentFragment();
+    newItems.forEach(function(item) {
         var cls = item.aggressor === 'BUY' ? 'buy' : item.aggressor === 'SELL' ? 'sell' : 'mix';
         var dirText = item.aggressor === 'BUY' ? '买' : item.aggressor === 'SELL' ? '卖' : '混';
 
@@ -803,22 +1052,50 @@ function updateOrderflow(items) {
         var deltaStr = (item.delta || 0) >= 0 ? '+' + (item.delta || 0) : '' + (item.delta || 0);
         var deltaColor = (item.delta || 0) >= 0 ? '#00d4aa' : '#ff4757';
 
-        // [FIX-2] 新数据添加高亮类（前3条认为是新数据）
-        var flashClass = idx < 3 ? ' flash-new' : '';
+        // [FIX-SCROLL] 新数据高亮：基于时间戳判断
+        var itemTime = (item.time || '') + (item.millisec ? '.' + item.millisec : '');
+        var isNew = itemTime > currentLastTime;
+        var flashClass = isNew ? ' flash-new' : '';
 
-        return '<div class="orderflow-item ' + cls + flashClass + '">' +
+        var div = document.createElement('div');
+        div.className = 'orderflow-item ' + cls + flashClass;
+        div.innerHTML =
             '<span class="time">' + (item.time || '--') + '</span>' +
             '<span class="price">' + price + '</span>' +
             '<span class="vol">' + (item.total_vol || 0) + '</span>' +
             '<span class="buy-v">' + (item.buy_vol || 0) + '</span>' +
             '<span class="sell-v">' + (item.sell_vol || 0) + '</span>' +
             '<span class="delta" style="color:' + deltaColor + '">' + deltaStr + '</span>' +
-            '<span class="dir">' + dirText + '</span>' +
-            '</div>';
-    }).join('');
+            '<span class="dir">' + dirText + '</span>';
+        fragment.appendChild(div);
+    });
 
-    list.innerHTML = html;
-    list.scrollTop = 0;
+    list.appendChild(fragment);
+
+    // [FIX-SCROLL] 限制最大显示条数为 500，超出则从顶部删除
+    var maxDisplay = 500;
+    while (list.children.length > maxDisplay) {
+        var firstChild = list.children[0];
+        // 从统计中减去被删除的数据
+        var buyV = parseInt(firstChild.querySelector('.buy-v').textContent) || 0;
+        var sellV = parseInt(firstChild.querySelector('.sell-v').textContent) || 0;
+        var deltaV = parseInt(firstChild.querySelector('.delta').textContent) || 0;
+        buyTotal -= buyV;
+        sellTotal -= sellV;
+        deltaTotal -= deltaV;
+        list.removeChild(firstChild);
+    }
+
+    // [FIX-SCROLL] 智能滚动：用户上滚查看历史时，不自动跳底；否则自动滚到最新
+    if (!ofUserScrolled) {
+        list.scrollTop = list.scrollHeight;
+    }
+
+    // [FIX-SCROLL] 更新最后一条数据的时间戳
+    if (filteredItems.length > 0) {
+        var lastItem = filteredItems[filteredItems.length - 1];
+        ofLastItemTime = (lastItem.time || '') + (lastItem.millisec ? '.' + lastItem.millisec : '');
+    }
 
     document.getElementById('stat-buy').textContent = buyTotal;
     document.getElementById('stat-sell').textContent = sellTotal;
@@ -826,16 +1103,159 @@ function updateOrderflow(items) {
     deltaEl.textContent = (deltaTotal >= 0 ? '+' : '') + deltaTotal;
     deltaEl.style.color = deltaTotal >= 0 ? '#00d4aa' : '#ff4757';
 
-    // [FIX-UI-4] 更新订单流统计信息（条数和时间范围）
+    // [FIX-UI-4] 更新订单流统计信息
     var ofStatLabel = document.getElementById('of-stat-label');
     var ofTimeRange = document.getElementById('of-time-range');
     if (ofStatLabel) {
-        ofStatLabel.textContent = '显示: ' + filteredItems.length + '条';
+        var visibleCount = list.querySelectorAll('.orderflow-item').length;
+        ofStatLabel.textContent = '显示: ' + visibleCount + '条 (最多' + maxDisplay + '条)';
     }
-    if (ofTimeRange && filteredItems.length > 0) {
-        var firstTime = filteredItems[filteredItems.length - 1].time || '--';
-        var lastTime = filteredItems[0].time || '--';
+    if (ofTimeRange && list.children.length > 0) {
+        var firstTimeEl = list.children[0].querySelector('.time');
+        var lastTimeEl = list.children[list.children.length - 1].querySelector('.time');
+        var firstTime = firstTimeEl ? firstTimeEl.textContent : '--';
+        var lastTime = lastTimeEl ? lastTimeEl.textContent : '--';
         ofTimeRange.textContent = firstTime + ' ~ ' + lastTime;
+    }
+}
+
+// [FIX-KLINE] 实时更新 K 线图表
+function updateKlineRealtime(klineUpdate) {
+    for (var i = 0; i < windowMode; i++) {
+        var inst = windowInstruments[i];
+        if (!inst) continue;
+
+        var chart = charts[i];
+        if (!chart) continue;
+
+        var period = windowPeriods[i] || '1m';
+        var instKlines = klineUpdate[inst];
+        if (!instKlines) continue;
+        var bar = instKlines[period];
+        if (!bar) continue;
+
+        var option = chart.getOption();
+        if (!option || !option.series || option.series.length === 0) continue;
+
+        var dates = option.xAxis[0].data || [];
+        var lastDate = dates[dates.length - 1];
+
+        var candleData = option.series[0].data || [];
+        var buyVolData = option.series[1].data || [];
+        var sellVolData = option.series[2].data || [];
+        var difData = option.series[3] ? option.series[3].data || [] : [];
+        var deaData = option.series[4] ? option.series[4].data || [] : [];
+        var macdData = option.series[5] ? option.series[5].data || [] : [];
+
+        if (!chart.__klines) chart.__klines = [];
+        var klinesCache = chart.__klines;
+
+        // [FIX-MACD] 处理实时MACD更新
+        var liveMacd = bar.live_macd || null;
+
+        if (lastDate === bar.time) {
+            // 更新最后一根 K 线
+            var lastIdx = candleData.length - 1;
+            candleData[lastIdx] = [bar.open, bar.close, bar.low, bar.high];
+
+            buyVolData[lastIdx] = { value: bar.buy_vol || 0, itemStyle: { color: '#00d4aa' } };
+            sellVolData[lastIdx] = { value: bar.sell_vol || 0, itemStyle: { color: '#ff4757' } };
+
+            if (klinesCache[lastIdx]) {
+                klinesCache[lastIdx] = {
+                    time: bar.time,
+                    open: bar.open, close: bar.close, low: bar.low, high: bar.high,
+                    volume: bar.volume,
+                    buy_vol: bar.buy_vol || 0,
+                    sell_vol: bar.sell_vol || 0,
+                    delta: bar.delta || 0
+                };
+            }
+
+            // [FIX-MACD] 更新最后一根bar的MACD值
+            if (liveMacd && difData.length > 0) {
+                var macdLastIdx = difData.length - 1;
+                difData[macdLastIdx] = liveMacd.dif;
+                deaData[macdLastIdx] = liveMacd.dea;
+                macdData[macdLastIdx] = {
+                    value: liveMacd.macd,
+                    itemStyle: { color: liveMacd.macd >= 0 ? '#00d4aa' : '#ff4757' }
+                };
+            }
+        } else {
+            // 新增一根 K 线
+            dates.push(bar.time);
+            candleData.push([bar.open, bar.close, bar.low, bar.high]);
+
+            buyVolData.push({ value: bar.buy_vol || 0, itemStyle: { color: '#00d4aa' } });
+            sellVolData.push({ value: bar.sell_vol || 0, itemStyle: { color: '#ff4757' } });
+
+            klinesCache.push({
+                time: bar.time,
+                open: bar.open, close: bar.close, low: bar.low, high: bar.high,
+                volume: bar.volume,
+                buy_vol: bar.buy_vol || 0,
+                sell_vol: bar.sell_vol || 0,
+                delta: bar.delta || 0
+            });
+
+            // [FIX-MACD] 新增bar时使用实时MACD或复制最后一个有效值
+            if (liveMacd) {
+                difData.push(liveMacd.dif);
+                deaData.push(liveMacd.dea);
+                macdData.push({
+                    value: liveMacd.macd,
+                    itemStyle: { color: liveMacd.macd >= 0 ? '#00d4aa' : '#ff4757' }
+                });
+            } else {
+                var lastDif = difData.length > 0 ? difData[difData.length - 1] : null;
+                var lastDea = deaData.length > 0 ? deaData[deaData.length - 1] : null;
+                var lastMacd = macdData.length > 0 ? macdData[macdData.length - 1] : null;
+                if (lastMacd && typeof lastMacd === 'object' && lastMacd.value !== undefined) {
+                    lastMacd = lastMacd.value;
+                }
+                difData.push(lastDif !== null && lastDif !== undefined ? lastDif : null);
+                deaData.push(lastDea !== null && lastDea !== undefined ? lastDea : null);
+                if (lastMacd !== null && lastMacd !== undefined) {
+                    macdData.push({
+                        value: lastMacd,
+                        itemStyle: { color: lastMacd >= 0 ? '#00d4aa' : '#ff4757' }
+                    });
+                } else {
+                    macdData.push(null);
+                }
+            }
+
+            if (dates.length > 200) {
+                dates.shift();
+                candleData.shift();
+                buyVolData.shift();
+                sellVolData.shift();
+                difData.shift();
+                deaData.shift();
+                macdData.shift();
+                klinesCache.shift();
+            }
+        }
+
+        chart.__klines = klinesCache;
+
+        chart.setOption({
+            xAxis: [
+                { data: dates },
+                { data: dates },
+                { data: dates }
+            ],
+            grid: getChartGrids(i),
+            series: [
+                { data: candleData },
+                { data: buyVolData },
+                { data: sellVolData },
+                { data: difData },
+                { data: deaData },
+                { data: macdData }
+            ]
+        });
     }
 }
 
@@ -979,9 +1399,11 @@ function connectWS() {
                 if (data.type === 'init' || data.type === 'update') {
                     if (data.window_config) {
                         windowMode = data.window_config.mode || windowMode;
-                        if (data.window_config.windows) {
-                            windowInstruments = data.window_config.windows;
-                        }
+                        // [FIX-KLINE] 不再覆盖 windowInstruments，信任前端用户选择
+                        // 后端 window_config 只作为参考，不强制同步
+                        // if (data.window_config.windows) {
+                        //     windowInstruments = data.window_config.windows;
+                        // }
                     }
 
                     // [FIX-3] 修复价格更新逻辑：正确添加/移除class + 闪烁效果
@@ -1036,6 +1458,15 @@ function connectWS() {
                             updateOrderflow(data.selected_orderflow);
                         } catch(e) {
                             console.error('[UI] updateOrderflow 错误:', e);
+                        }
+                    }
+
+                    // [FIX-KLINE] 实时更新 K 线图表
+                    if (data.kline_update) {
+                        try {
+                            updateKlineRealtime(data.kline_update);
+                        } catch(e) {
+                            console.error('[UI] updateKlineRealtime 错误:', e);
                         }
                     }
                     // [FIX-UI-5] 接收后端推送的订单流统计信息
@@ -1163,6 +1594,37 @@ document.addEventListener('DOMContentLoaded', function() {
 
     var btnSource = document.getElementById('btnSource');
     if (btnSource) btnSource.addEventListener('click', switchSource);
+
+    // [FIX-SCROLL] 订单流列表滚动监听
+    var ofList = document.getElementById('orderflow-list');
+    if (ofList) {
+        ofList.addEventListener('scroll', function() {
+            // 判断是否滚动到底部（容差5px）
+            var atBottom = ofList.scrollTop + ofList.clientHeight >= ofList.scrollHeight - 5;
+            if (!atBottom) {
+                // 用户向上滚动查看历史，标记为手动滚动
+                ofUserScrolled = true;
+                // 清除之前的自动回底定时器
+                if (ofAutoReturnTimer) {
+                    clearTimeout(ofAutoReturnTimer);
+                    ofAutoReturnTimer = null;
+                }
+                // 15秒后自动回到底部
+                ofAutoReturnTimer = setTimeout(function() {
+                    ofUserScrolled = false;
+                    ofList.scrollTop = ofList.scrollHeight;
+                    debugLog('订单流自动回到底部', 'info');
+                }, 15000);
+            } else {
+                // 用户滚回底部，取消手动滚动标记
+                ofUserScrolled = false;
+                if (ofAutoReturnTimer) {
+                    clearTimeout(ofAutoReturnTimer);
+                    ofAutoReturnTimer = null;
+                }
+            }
+        });
+    }
 
     // [FIX-4] 先获取数据源状态，确保初始化时状态正确
     fetch(API_BASE + '/api/source')

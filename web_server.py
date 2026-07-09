@@ -99,7 +99,7 @@ PERIODS = {k: v for k, v in PERIODS_CONFIG.items() if k in DISPLAY_PERIODS}
 WINDOW_CONFIG = {
     "DEFAULT_MODE": 6,           # 默认6窗口
     "MAX_ACTIVE": 6,             # 最大活跃品种数
-    "ORDERFLOW_MAXLEN": 500,     # 订单流内存保留条数
+    "ORDERFLOW_MAXLEN": 2000,    # [FIX-SCROLL] 订单流内存保留条数 500->2000
 }
 
 # CSV 存储配置
@@ -768,26 +768,172 @@ class CSVManager:
         self._flush()
 
 
-# ============ 交易时间工具 ============
-TRADING_SESSIONS = {
-    "day": [("09:00", "10:15"), ("10:30", "11:30"), ("13:30", "15:00")],
-    "night": [("21:00", "23:00")],
+# ============ 交易时间工具（按品种区分夜盘结束时间）============
+# 2026年最新交易时间（上期所/能源中心/大商所/郑商所）
+# 参考: 上海期货交易所官网 www.shfe.com.cn/services/calenderandholidays/tradinghours/
+#       大连商品交易所 www.dce.com.cn
+#       郑州商品交易所 www.czce.com.cn
+
+# 日盘统一时间段
+DAY_SESSIONS = [("09:00", "10:15"), ("10:30", "11:30"), ("13:30", "15:00")]
+
+# 品种夜盘时间段映射（None 表示无夜盘）
+# 格式: "品种代码前缀": ("夜盘开始", "夜盘结束")
+# 结束时间跨凌晨的用 "HH:MM" 表示，_time_in_range 会自动处理跨天
+INSTRUMENT_NIGHT_SESSIONS = {
+    # 上期所 - 有色金属: 21:00-次日01:00
+    "cu": ("21:00", "01:00"),   # 铜
+    "al": ("21:00", "01:00"),   # 铝
+    "zn": ("21:00", "01:00"),   # 锌
+    "pb": ("21:00", "01:00"),   # 铅
+    "ni": ("21:00", "01:00"),   # 镍
+    "sn": ("21:00", "01:00"),   # 锡
+    "ss": ("21:00", "01:00"),   # 不锈钢
+    "ao": ("21:00", "01:00"),   # 氧化铝
+    "bc": ("21:00", "01:00"),   # 国际铜 (能源中心)
+
+    # 上期所 - 贵金属: 21:00-次日02:30
+    "au": ("21:00", "02:30"),   # 黄金
+    "ag": ("21:00", "02:30"),   # 白银
+
+    # 能源中心 - 原油: 21:00-次日02:30
+    "sc": ("21:00", "02:30"),   # 原油
+
+    # 上期所 - 能源化工: 21:00-23:00
+    "rb": ("21:00", "23:00"),   # 螺纹钢
+    "hc": ("21:00", "23:00"),   # 热轧卷板
+    "fu": ("21:00", "23:00"),   # 燃料油
+    "bu": ("21:00", "23:00"),   # 沥青
+    "ru": ("21:00", "23:00"),   # 天然橡胶
+    "sp": ("21:00", "23:00"),   # 纸浆
+    "br": ("21:00", "23:00"),   # 丁二烯橡胶
+    "nr": ("21:00", "23:00"),   # 20号胶
+
+    # 能源中心 - 其他: 21:00-23:00
+    "lu": ("21:00", "23:00"),   # 低硫燃料油
+
+    # 大商所 - 工业品/农产品: 21:00-23:00
+    "i":  ("21:00", "23:00"),   # 铁矿石
+    "j":  ("21:00", "23:00"),   # 焦炭
+    "jm": ("21:00", "23:00"),   # 焦煤
+    "p":  ("21:00", "23:00"),   # 棕榈油
+    "y":  ("21:00", "23:00"),   # 豆油
+    "m":  ("21:00", "23:00"),   # 豆粕
+    "rm": ("21:00", "23:00"),   # 菜粕
+    "a":  ("21:00", "23:00"),   # 黄大豆1号
+    "b":  ("21:00", "23:00"),   # 黄大豆2号
+    "c":  ("21:00", "23:00"),   # 玉米
+    "cs": ("21:00", "23:00"),   # 玉米淀粉
+    "eb": ("21:00", "23:00"),   # 苯乙烯
+    "eg": ("21:00", "23:00"),   # 乙二醇
+    "l":  ("21:00", "23:00"),   # 聚乙烯
+    "pp": ("21:00", "23:00"),   # 聚丙烯
+    "pvc":("21:00", "23:00"),   # 聚氯乙烯
+    "pg": ("21:00", "23:00"),   # 液化石油气
+
+    # 郑商所 - 夜盘品种: 21:00-23:00
+    "cf": ("21:00", "23:00"),   # 棉花
+    "sr": ("21:00", "23:00"),   # 白糖
+    "ta": ("21:00", "23:00"),   # PTA
+    "ma": ("21:00", "23:00"),   # 甲醇
+    "fg": ("21:00", "23:00"),   # 玻璃
+    "oi": ("21:00", "23:00"),   # 菜籽油
+    "sa": ("21:00", "23:00"),   # 纯碱
+    "sf": ("21:00", "23:00"),   # 硅铁
+    "sm": ("21:00", "23:00"),   # 锰硅
+    "ur": ("21:00", "23:00"),   # 尿素
+    "cj": ("21:00", "23:00"),   # 红枣
+    "ap": ("21:00", "23:00"),   # 苹果
+    "pk": ("21:00", "23:00"),   # 花生
+
+    # 无夜盘品种
+    "lh": None,                  # 生猪
+    "jd": None,                  # 鸡蛋
+    "ri": None,                  # 早籼稻
+    "lr": None,                  # 晚籼稻
+    "jr": None,                  # 粳稻
+    "rs": None,                  # 油菜籽
+    "pm": None,                  # 普麦
+    "wh": None,                  # 强麦
+    "cy": None,                  # 棉纱
 }
 
-def is_trading_time(now=None):
+
+def _time_in_range(time_str, start_str, end_str):
+    """判断时间是否在区间内，支持跨凌晨（如 21:00-01:00）"""
+    def parse(t):
+        h, m = map(int, t.split(":"))
+        return h * 60 + m
+
+    t = parse(time_str)
+    s = parse(start_str)
+    e = parse(end_str)
+
+    if s <= e:  # 不跨天，如 09:00-10:15
+        return s <= t <= e
+    else:  # 跨凌晨，如 21:00-01:00
+        return t >= s or t <= e
+
+
+def get_instrument_night_session(inst):
+    """获取品种的夜盘时间段，返回 (start, end) 或 None"""
+    if not inst:
+        return None
+    # 提取品种代码前缀（去掉年份数字）
+    prefix = ""
+    for ch in inst.lower():
+        if ch.isalpha():
+            prefix += ch
+        else:
+            break
+
+    # 先查精确匹配
+    if prefix in INSTRUMENT_NIGHT_SESSIONS:
+        return INSTRUMENT_NIGHT_SESSIONS[prefix]
+
+    # 尝试2字母前缀
+    if len(prefix) >= 2 and prefix[:2] in INSTRUMENT_NIGHT_SESSIONS:
+        return INSTRUMENT_NIGHT_SESSIONS[prefix[:2]]
+
+    # 尝试1字母前缀
+    if len(prefix) >= 1 and prefix[0] in INSTRUMENT_NIGHT_SESSIONS:
+        return INSTRUMENT_NIGHT_SESSIONS[prefix[0]]
+
+    # 默认无夜盘（安全策略）
+    return None
+
+
+def is_trading_time(inst=None, now=None):
+    """
+    判断指定品种当前是否为交易时间
+    Args:
+        inst: 品种代码，如 "au2512", "rb2510"
+        now: 可选，指定时间，默认当前时间
+    Returns:
+        bool: 是否为交易时间
+    """
     if now is None:
         now = datetime.now()
+
     time_str = now.strftime("%H:%M")
     weekday = now.weekday()
+
+    # 周末休市
     if weekday >= 5:
         return False
-    for start, end in TRADING_SESSIONS["day"]:
+
+    # 检查日盘
+    for start, end in DAY_SESSIONS:
         if start <= time_str <= end:
             return True
-    for start, end in TRADING_SESSIONS["night"]:
-        if start <= time_str <= end:
-            return True
-    return False
+
+    # 检查夜盘（按品种）
+    night_session = get_instrument_night_session(inst)
+    if night_session is None:
+        return False  # 无夜盘的品种
+
+    night_start, night_end = night_session
+    return _time_in_range(time_str, night_start, night_end)
 
 
 # ============ 全局数据存储（LRU活跃品种管理 + CSV持久化） ============
@@ -1017,12 +1163,45 @@ class DataStore:
         dea = self._ema(dif, 9)
         macd_hist = [2 * (dif[i] - dea[i]) for i in range(len(dea))]
 
+        # MACD needs 26 bars for EMA26 + 9 bars for DEA = 35 bars warmup
+        # First 34 values are unreliable, pad with None
+        warmup = 34
+        n = len(bars)
+        dif_padded = [None] * max(0, n - len(dif)) + [round(x, 4) for x in dif]
+        dea_padded = [None] * max(0, n - len(dea)) + [round(x, 4) for x in dea]
+        macd_padded = [None] * max(0, n - len(macd_hist)) + [round(x, 4) for x in macd_hist]
+
         with self._lock:
             self.macd[inst][period] = {
-                "dif": [round(x, 4) for x in dif[-50:]],
-                "dea": [round(x, 4) for x in dea[-50:]],
-                "macd": [round(x, 4) for x in macd_hist[-50:]],
+                "dif": dif_padded,
+                "dea": dea_padded,
+                "macd": macd_padded,
             }
+
+    def get_live_macd(self, inst, period):
+        """计算包含当前未完成bar的实时MACD值"""
+        with self._lock:
+            bars = list(self.klines[inst][period])
+            current = self.current_bar.get(inst, {}).get(period)
+
+        if len(bars) < 26:
+            return None
+
+        closes = [b["close"] for b in bars]
+        if current:
+            closes.append(current["close"])
+
+        ema12 = self._ema(closes, 12)
+        ema26 = self._ema(closes, 26)
+        dif = [ema12[i] - ema26[i] for i in range(len(ema12))]
+        dea = self._ema(dif, 9)
+        macd_hist = [2 * (dif[i] - dea[i]) for i in range(len(dea))]
+
+        return {
+            "dif": round(dif[-1], 4),
+            "dea": round(dea[-1], 4),
+            "macd": round(macd_hist[-1], 4),
+        }
 
     def _ema(self, data, period):
         if len(data) < period:
@@ -1032,14 +1211,14 @@ class DataStore:
         for i in range(period, len(data)):
             ema.append(data[i] * k + ema[-1] * (1 - k))
         result = [ema[0]] * (period - 1) + ema
-        return result[-50:]
+        return result
 
     def update_tick(self, inst, tick_data):
         if inst not in self.active_instruments:
             return
 
         # [FIX-DATA-1] 非交易时间的数据不存入数据库（但保留在内存供显示）
-        is_trading = is_trading_time()
+        is_trading = is_trading_time(inst)
 
         calc = self.calculators.get(inst)
         if not calc:
@@ -1050,23 +1229,26 @@ class DataStore:
         if not flow:
             return
 
+        # [FIX-DB-THREAD] 把 DuckDB 操作放到 lock 内，避免多线程并发写入
         with self._lock:
             self.last_ticks[inst] = flow
-            # [FIX-DATA-2] 非交易时间的数据不入订单流队列（避免污染）
-            if is_trading:
+            # [FIX-MOCK-ORDERFLOW] Mock 模式下始终保存 orderflow，不检查交易时间
+            # CTP 模式下只在交易时间保存，避免非交易时间数据污染
+            if self.data_source == "mock" or is_trading:
                 self.orderflow[inst].append(flow)
             self.tick_count += 1
             self._access_time[inst] = time.time()
             self._access_time.move_to_end(inst)
 
-        # [FIX-DATA-3] 非交易时间的数据不存入DuckDB数据库
-        if is_trading:
-            self.db_manager.save_tick(inst, flow)
+            # [FIX-DATA-3] 只有CTP模式且交易时间才写入DuckDB
+            # Mock 模式数据不保存到数据库
+            if is_trading and self.data_source == "ctp":
+                self.db_manager.save_tick(inst, flow)
 
-        # [FIX-DATA-4] 非交易时间不更新K线（避免K线出现断层/跳变）
-        if is_trading:
-            for period_name, seconds in PERIODS.items():
-                self._update_kline(inst, period_name, seconds, flow)
+            # [FIX-DATA-4] Mock 模式下始终更新 K 线，CTP 模式只在交易时间更新
+            if self.data_source == "mock" or is_trading:
+                for period_name, seconds in PERIODS.items():
+                    self._update_kline(inst, period_name, seconds, flow)
 
     def _update_kline(self, inst, period_name, seconds, flow):
         now = datetime.now()
@@ -1082,7 +1264,8 @@ class DataStore:
 
             if not current or current.get("time") != bar_key:
                 if current:
-                    if period_name == "1m":
+                    # [FIX-DATA-3] 只有CTP模式才保存K线到DuckDB
+                    if period_name == "1m" and self.data_source == "ctp":
                         self.db_manager.save_kline(inst, period_name, current)
                     self.klines[inst][period_name].append(current)
                     if len(self.klines[inst][period_name]) > 200:
@@ -1132,7 +1315,26 @@ class DataStore:
         with self._lock:
             if inst not in self.macd or period not in self.macd[inst]:
                 return {"dif": [], "dea": [], "macd": []}
-            return dict(self.macd[inst][period])
+            macd_data = self.macd[inst][period]
+            has_current = bool(self.current_bar.get(inst, {}).get(period))
+            bars_count = len(self.klines[inst][period]) if inst in self.klines and period in self.klines[inst] else 0
+
+        # [FIX-MACD-ALIGN] 返回与get_klines完全对齐的MACD
+        # get_klines返回: bars[-100:] + current_bar（如果有）
+        # MACD只针对已收盘bar计算，当前bar用null占位
+        if has_current and bars_count >= 100:
+            # get_klines返回99个已收盘 + 1个当前bar
+            # MACD: 99个已收盘bar的值 + 1个null（当前bar占位）
+            dif = (macd_data["dif"][-99:] + [None]) if len(macd_data["dif"]) >= 99 else macd_data["dif"]
+            dea = (macd_data["dea"][-99:] + [None]) if len(macd_data["dea"]) >= 99 else macd_data["dea"]
+            macd = (macd_data["macd"][-99:] + [None]) if len(macd_data["macd"]) >= 99 else macd_data["macd"]
+        else:
+            # 无当前bar或不足100个，直接取最后100个
+            dif = macd_data["dif"][-100:] if macd_data["dif"] else []
+            dea = macd_data["dea"][-100:] if macd_data["dea"] else []
+            macd = macd_data["macd"][-100:] if macd_data["macd"] else []
+
+        return {"dif": dif, "dea": dea, "macd": macd}
 
     def get_window_config(self):
         with self._lock:
@@ -1162,9 +1364,9 @@ class MockEngine:
         self.running = False
 
     def generate_tick(self, inst):
-        # [FIX-MOCK-1] 非交易时间不生成Mock数据，避免污染真实数据
-        if not is_trading_time():
-            return None
+        # [FIX-MOCK-1] Mock模式下始终生成数据，不受交易时间限制
+        # 这样非交易时间也能测试前端功能
+        # 数据库存储仍受 is_trading_time 控制（在 update_tick 中）
 
         # [FIX-MOCK-2] 使用last_price作为基准（如果有CTP真实价格），否则用base_price
         last_real_price = store.last_ticks.get(inst, {}).get("price")
@@ -1173,27 +1375,60 @@ class MockEngine:
         else:
             base = self.prices.get(inst, BASE_PRICES.get(inst, 3000.0))
 
-        # [FIX-MOCK-3] 价格波动限制在±0.1%以内，避免与真实数据差距过大
-        change = random.gauss(0, base * 0.0005)  # 缩小波动率从0.1%到0.05%
+        # [FIX-MOCK-3] 价格波动
+        change = random.gauss(0, base * 0.0005)
         price = round(base + change, 2)
         # [FIX-MOCK-4] 限制价格在真实价格±1%范围内
         price = max(base * 0.99, min(base * 1.01, price))
         self.prices[inst] = price
 
-        vol = random.randint(1, 50) if random.random() > 0.3 else 0
-        self.volumes[inst] += vol
-
-        spread = base * 0.0005
+        # [FIX-MOCK-ORDERFLOW] 生成真实的订单流数据
+        # 模拟真实市场：价格有时触及 bid（主动卖）或 ask（主动买）
+        spread = max(base * 0.0002, 0.01)  # 最小 spread 0.01
         bid = round(price - spread, 2)
         ask = round(price + spread, 2)
 
+        # 生成成交量（本次 tick 的成交量）
+        vol = random.randint(1, 30) if random.random() > 0.2 else 0
+        self.volumes[inst] += vol
+
+        # 模拟主动买卖方向
+        # 30% 概率主动买（价格 >= ask），30% 主动卖（价格 <= bid），40% MIX
+        r = random.random()
+        if r < 0.3 and vol > 0:
+            # 主动买：价格向上触及 ask
+            price = ask
+            buy_vol = vol
+            sell_vol = 0
+            aggressor = "BUY"
+        elif r < 0.6 and vol > 0:
+            # 主动卖：价格向下触及 bid
+            price = bid
+            buy_vol = 0
+            sell_vol = vol
+            aggressor = "SELL"
+        else:
+            # 混合成交
+            buy_vol = int(vol * random.uniform(0.3, 0.7))
+            sell_vol = vol - buy_vol
+            aggressor = "MIX" if vol > 0 else "MIX"
+
+        # total_vol 应该是累计成交量（模拟 CTP 的 Volume 字段）
+        # OrderFlowCalculator 会计算 vol_delta = volume - last_volume
         return {
             "time": datetime.now().strftime("%H:%M:%S"),
             "millisec": datetime.now().microsecond // 1000,
-            "instrument": inst, "price": price, "total_vol": vol,
-            "buy_vol": 0, "sell_vol": 0, "delta": 0,
-            "bid": bid, "ask": ask, "bid_vol": random.randint(50, 500),
-            "ask_vol": random.randint(50, 500), "aggressor": "MIX",
+            "instrument": inst,
+            "price": price,
+            "total_vol": self.volumes[inst],  # 累计成交量（模拟 CTP Volume）
+            "buy_vol": buy_vol,       # 本次主动买量
+            "sell_vol": sell_vol,     # 本次主动卖量
+            "delta": buy_vol - sell_vol,
+            "bid": bid,
+            "ask": ask,
+            "bid_vol": random.randint(50, 500),
+            "ask_vol": random.randint(50, 500),
+            "aggressor": aggressor,
             "volume_total": self.volumes[inst],
         }
 
@@ -1497,7 +1732,7 @@ async def data_pusher():
 
                 orderflow = []
                 if main_inst and main_inst in store.active_instruments:
-                    orderflow = list(store.orderflow.get(main_inst, deque()))[-150:]
+                    orderflow = list(store.orderflow.get(main_inst, deque()))[-500:]
 
                 data_source = dsm.current
 
@@ -1508,6 +1743,25 @@ async def data_pusher():
                 first_time = orderflow[0].get("time", "--")
                 last_time = orderflow[-1].get("time", "--")
                 of_time_range = first_time + " ~ " + last_time
+
+            # [FIX-KLINE] 获取所有窗口品种的实时 K 线数据 + 实时MACD
+            kline_update = {}
+            with store._lock:
+                all_window_insts = set(store.window_instruments)
+                all_window_insts.update(store.active_instruments)
+                for inst_key in all_window_insts:
+                    if not inst_key:
+                        continue
+                    kline_update[inst_key] = {}
+                    for period_name in PERIODS.keys():
+                        current = store.current_bar.get(inst_key, {}).get(period_name)
+                        if current:
+                            bar_data = dict(current)
+                            # [FIX-MACD] 追加实时MACD值
+                            live_macd = store.get_live_macd(inst_key, period_name)
+                            if live_macd:
+                                bar_data["live_macd"] = live_macd
+                            kline_update[inst_key][period_name] = bar_data
 
             data = {
                 "type": "update",
@@ -1523,7 +1777,9 @@ async def data_pusher():
                     "count": of_count,
                     "time_range": of_time_range,
                     "max_display": 150
-                }
+                },
+                # [FIX-KLINE] 推送实时 K 线更新
+                "kline_update": kline_update,
             }
 
             for inst in active_insts:
