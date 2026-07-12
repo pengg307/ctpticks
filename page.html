@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>CTP 订单流实时监控</title>
+    <title>CTP 订单流实时监控 v2.0</title>
     <script src="/js/echarts.min.js" onerror="this.src='https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js'"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -179,7 +179,7 @@
             padding-top: 28px;
         }
         .right-section {
-            width: 360px;
+            width: 380px;
             background: #0f1420;
             border-left: 2px solid #1a1f2e;
             display: flex;
@@ -205,6 +205,67 @@
             color: #888;
             margin-left: 6px;
         }
+        .indicator-dashboard {
+            background: #121826;
+            border-bottom: 1px solid #2a3040;
+            padding: 8px 10px;
+            flex-shrink: 0;
+        }
+        .indicator-dashboard .dash-title {
+            font-size: 10px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 6px;
+        }
+        .indicator-dashboard .dash-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+        }
+        .indicator-dashboard .dash-item {
+            background: #1a1f2e;
+            border-radius: 4px;
+            padding: 5px 8px;
+            border: 1px solid #2a3040;
+        }
+        .indicator-dashboard .dash-item .dash-label {
+            font-size: 9px;
+            color: #666;
+            margin-bottom: 2px;
+        }
+        .indicator-dashboard .dash-item .dash-value {
+            font-size: 13px;
+            font-weight: bold;
+            font-family: 'SF Mono', 'Consolas', monospace;
+        }
+        .indicator-dashboard .dash-item .dash-value.buy { color: #00d4aa; }
+        .indicator-dashboard .dash-item .dash-value.sell { color: #ff4757; }
+        .indicator-dashboard .dash-item .dash-value.neutral { color: #888; }
+        .indicator-dashboard .dash-item .dash-value.spike {
+            color: #ff4757;
+            animation: pulseRed 1s infinite;
+        }
+        @keyframes pulseRed {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .key-levels-table {
+            margin-top: 6px;
+            border-top: 1px solid #2a3040;
+            padding-top: 6px;
+        }
+        .key-levels-table .kl-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            padding: 1px 0;
+        }
+        .key-levels-table .kl-row .kl-label { color: #666; }
+        .key-levels-table .kl-row .kl-value { font-family: monospace; }
+        .key-levels-table .kl-row .kl-value.res { color: #ff6b6b; }
+        .key-levels-table .kl-row .kl-value.sup { color: #00d4aa; }
+        .key-levels-table .kl-row .kl-value.pivot { color: #f1c40f; }
         .orderflow-list {
             flex: 1;
             overflow-y: auto;
@@ -214,8 +275,8 @@
         .orderflow-item {
             display: flex;
             align-items: center;
-            padding: 2px 5px;  /* [FIX-UI-1] 减小padding从3px到2px，显示更多行 */
-            margin-bottom: 1px;  /* [FIX-UI-2] 减小margin从2px到1px */
+            padding: 2px 5px;
+            margin-bottom: 1px;
             border-radius: 3px;
             font-size: 11px;
             font-family: 'SF Mono', 'Consolas', monospace;
@@ -298,7 +359,6 @@
             justify-content: center;
         }
 
-        /* [FIX-2] 新增：订单流新数据高亮动画 */
         @keyframes flashNew {
             0% { background-color: rgba(0,212,170,0.4); }
             100% { background-color: transparent; }
@@ -307,7 +367,6 @@
             animation: flashNew 0.6s ease-out;
         }
 
-        /* [FIX-3] 新增：价格闪烁动画 */
         @keyframes priceFlashUp {
             0% { color: #00ff88; text-shadow: 0 0 8px rgba(0,255,136,0.5); }
             100% { color: #00d4aa; text-shadow: none; }
@@ -366,7 +425,6 @@
             .orderflow-item .delta { width: 40px; }
         }
 
-        /* [FIX-GRID] 面板拖拽调整高度 */
         .grid-drag-handle {
             position: absolute;
             left: 10%;
@@ -391,10 +449,11 @@
 </head>
 <body>
     <div class="header">
-        <h1>CTP订单流</h1>
+        <h1>CTP订单流 v2.0</h1>
         <div class="mode-btns">
+            <button class="mode-btn active" id="btnMode2" onclick="changeMode(2)">2窗口</button>
             <button class="mode-btn" id="btnMode4" onclick="changeMode(4)">4窗口</button>
-            <button class="mode-btn active" id="btnMode6" onclick="changeMode(6)">6窗口</button>
+            <button class="mode-btn" id="btnMode6" onclick="changeMode(6)">6窗口</button>
         </div>
         <span class="status" id="conn-status">未连接</span>
         <button class="btn-source mock" id="btnSource" title="点击切换Mock/CTP">Mock</button>
@@ -406,6 +465,41 @@
             <div class="right-header">
                 <span class="inst-title" id="right-title">--</span>
                 <span class="inst-code" id="right-code">--</span>
+            </div>
+            <div class="indicator-dashboard" id="indicator-dashboard">
+                <div class="dash-title">指标面板</div>
+                <div class="dash-grid">
+                    <div class="dash-item">
+                        <div class="dash-label">Spread</div>
+                        <div class="dash-value neutral" id="dash-spread">--</div>
+                    </div>
+                    <div class="dash-item">
+                        <div class="dash-label">Vol Z-Score</div>
+                        <div class="dash-value neutral" id="dash-vol-z">--</div>
+                    </div>
+                    <div class="dash-item">
+                        <div class="dash-label">CVD</div>
+                        <div class="dash-value neutral" id="dash-cvd">--</div>
+                    </div>
+                    <div class="dash-item">
+                        <div class="dash-label">CVD Slope</div>
+                        <div class="dash-value neutral" id="dash-cvd-slope">--</div>
+                    </div>
+                    <div class="dash-item">
+                        <div class="dash-label">NOI Z-Score</div>
+                        <div class="dash-value neutral" id="dash-noi-z">--</div>
+                    </div>
+                    <div class="dash-item">
+                        <div class="dash-label">VWAP</div>
+                        <div class="dash-value neutral" id="dash-vwap">--</div>
+                    </div>
+                </div>
+                <div class="key-levels-table" id="key-levels-table">
+                    <div class="kl-row"><span class="kl-label">Pivot</span><span class="kl-value pivot" id="kl-pivot">--</span></div>
+                    <div class="kl-row"><span class="kl-label">R1 / S1</span><span class="kl-value"><span class="res" id="kl-r1">--</span> / <span class="sup" id="kl-s1">--</span></span></div>
+                    <div class="kl-row"><span class="kl-label">R2 / S2</span><span class="kl-value"><span class="res" id="kl-r2">--</span> / <span class="sup" id="kl-s2">--</span></span></div>
+                    <div class="kl-row"><span class="kl-label">R3 / S3</span><span class="kl-value"><span class="res" id="kl-r3">--</span> / <span class="sup" id="kl-s3">--</span></span></div>
+                </div>
             </div>
             <div class="orderflow-list" id="orderflow-list">
                 <div style="text-align:center; color:#666; padding-top:50px;">点击"连接"开始接收数据</div>
@@ -423,7 +517,6 @@
                     <span class="label">净Δ:</span>
                     <span class="value" id="stat-delta">0</span>
                 </div>
-                <!-- [FIX-UI-3] 新增订单流统计信息 -->
                 <div class="row" style="margin-top:4px; border-top:1px solid #2a3040; padding-top:4px;">
                     <span class="label" id="of-stat-label">显示: 0条</span>
                     <span class="value" id="of-time-range" style="font-size:9px; color:#666;">--</span>
@@ -446,12 +539,11 @@ const SERVER_CONFIG = $SERVER_CONFIG;
 const ALL_INSTRUMENTS = SERVER_CONFIG.all_instruments || [];
 const ALL_INSTRUMENT_NAMES = SERVER_CONFIG.instrument_names || {};
 const PERIODS = SERVER_CONFIG.periods || ["1m", "5m", "15m", "1h"];
-const DEFAULT_MODE = SERVER_CONFIG.default_mode || 6;
+const DEFAULT_MODE = SERVER_CONFIG.default_mode || 2;
 const DEFAULT_WINDOWS = SERVER_CONFIG.default_windows || [];
 
 // ==================== 服务器配置 ====================
 const SERVER_HOST = window.location.host || "localhost:8080";
-// 如果从 file:// 协议打开，强制使用 localhost:8080
 const WS_HOST = (window.location.protocol === 'file:' || !window.location.host) 
     ? "localhost:8080" 
     : window.location.host;
@@ -468,18 +560,18 @@ let ws = null;
 let isConnected = false;
 let currentSource = 'mock';
 let reconnectTimer = null;
-let heartbeatTimer = null;  // [FIX] 全局心跳定时器
-let isConnecting = false;   // [FIX] 防止重复连接
-// [FIX-3] 记录上次价格用于判断涨跌
+let heartbeatTimer = null;
+let isConnecting = false;
 let lastPrices = {};
-// [FIX-SCROLL] 订单流滚动控制状态
-let ofUserScrolled = false;       // 用户是否手动上滚
-let ofAutoReturnTimer = null;     // 自动回底定时器
-let ofLastItemTime = "";          // 上次最后一条数据的时间戳
+let ofUserScrolled = false;
+let ofAutoReturnTimer = null;
+let ofLastItemTime = "";
 
-// [FIX-GRID] 面板高度调整状态
-const DEFAULT_GRID_RATIOS = [0.55, 0.22, 0.23];  // K线/成交量/Delta/MACD
-let gridRatios = {};  // 每个窗口的 grid 比例: { "0_1m": [0.5, 0.18, 0.14, 0.18] }
+// [NEW] 缓存每个窗口的最新指标数据
+let windowIndicators = {};
+
+const DEFAULT_GRID_RATIOS = [0.35, 0.12, 0.12, 0.12, 0.12, 0.17];
+let gridRatios = {};
 
 // ==================== 工具函数 ====================
 function debugLog(msg, type) {
@@ -507,14 +599,12 @@ function toggleDebug() {
 function changeMode(mode) {
     if (mode === windowMode) return;
     windowMode = mode;
-
+    document.getElementById('btnMode2').classList.toggle('active', mode === 2);
     document.getElementById('btnMode4').classList.toggle('active', mode === 4);
     document.getElementById('btnMode6').classList.toggle('active', mode === 6);
-
     if (ws && isConnected) {
         ws.send(JSON.stringify({action: 'change_mode', mode: mode}));
     }
-
     initLayout();
     setTimeout(function() {
         for (var i = 0; i < windowMode; i++) {
@@ -523,7 +613,6 @@ function changeMode(mode) {
             initChart(i, inst);
         }
     }, 300);
-
     debugLog('切换为 ' + mode + ' 窗口模式', 'info');
 }
 
@@ -593,19 +682,16 @@ function initLayout() {
         (function(idx) {
             var win = document.getElementById('window-' + idx);
             if (!win) return;
-
             win.addEventListener('click', function(e) {
                 if (e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION' || e.target.classList.contains('period-btn') || e.target.classList.contains('grid-drag-handle')) return;
                 selectWindow(idx);
             });
-
             var select = win.querySelector('.inst-select');
             if (select) {
                 select.addEventListener('change', function(e) {
                     changeWindowInstrument(idx, e.target.value);
                 });
             }
-
             win.querySelectorAll('.period-btn').forEach(function(btn) {
                 btn.addEventListener('click', function(e) {
                     e.stopPropagation();
@@ -625,92 +711,66 @@ function initLayout() {
 function initChart(windowIdx, inst) {
     var container = document.getElementById('chart-' + windowIdx);
     if (!container) return;
-
     if (charts[windowIdx]) {
         charts[windowIdx].dispose();
         delete charts[windowIdx];
     }
-
     try {
         var chart = echarts.init(container, 'dark');
         charts[windowIdx] = chart;
         fetchKlineData(inst, windowPeriods[windowIdx] || '1m', windowIdx);
         window.addEventListener('resize', function() { chart.resize(); });
-        // [FIX-GRID] 初始化拖拽手柄
         setTimeout(function() { createGridDragHandles(windowIdx); }, 500);
     } catch (e) {
         debugLog("图表初始化失败 " + windowIdx + ": " + e.message, "error");
     }
 }
 
-// [FIX-GRID] 创建面板拖拽手柄
 function createGridDragHandles(windowIdx) {
     var container = document.getElementById('chart-' + windowIdx);
     if (!container) return;
-
-    // 移除旧的手柄
     var oldHandles = container.querySelectorAll('.grid-drag-handle');
     oldHandles.forEach(function(h) { h.remove(); });
-
-    // 创建 2 个拖拽手柄（在 3 个面板之间）
-    for (var i = 0; i < 2; i++) {
+    for (var i = 0; i < 5; i++) {
         var handle = document.createElement('div');
         handle.className = 'grid-drag-handle';
         handle.dataset.handleIndex = i;
         handle.dataset.windowIdx = windowIdx;
-
-        // 初始位置（稍后由 updateDragHandlePositions 更新）
         handle.style.left = '10%';
         handle.style.right = '6%';
         handle.style.top = '0%';
-
         container.appendChild(handle);
-
-        // 绑定拖拽事件
         handle.addEventListener('mousedown', onDragHandleMouseDown);
     }
-
     updateDragHandlePositions(windowIdx);
 }
 
-// [FIX-GRID] 更新拖拽手柄位置
 function updateDragHandlePositions(windowIdx) {
     var container = document.getElementById('chart-' + windowIdx);
     if (!container) return;
-
     var chart = charts[windowIdx];
     if (!chart) return;
-
     var option = chart.getOption();
     if (!option || !option.grid) return;
-
     var handles = container.querySelectorAll('.grid-drag-handle');
-    var containerHeight = container.clientHeight;
-
     handles.forEach(function(handle, i) {
         var grid = option.grid[i];
         if (!grid) return;
-
         var top = parseFloat(grid.top) || 0;
         var height = parseFloat(grid.height) || 0;
         var bottom = top + height;
-
         handle.style.top = bottom + '%';
     });
 }
 
-// [FIX-GRID] 拖拽事件处理
 var dragState = null;
-
 function onDragHandleMouseDown(e) {
     e.preventDefault();
     e.stopPropagation();
-
     var handle = e.currentTarget;
     var windowIdx = parseInt(handle.dataset.windowIdx);
     var handleIdx = parseInt(handle.dataset.handleIndex);
     var container = document.getElementById('chart-' + windowIdx);
-
     dragState = {
         windowIdx: windowIdx,
         handleIdx: handleIdx,
@@ -718,7 +778,6 @@ function onDragHandleMouseDown(e) {
         containerHeight: container.clientHeight,
         startRatios: (gridRatios[windowIdx + '_' + (windowPeriods[windowIdx] || '1m')] || DEFAULT_GRID_RATIOS.slice()).slice()
     };
-
     handle.classList.add('dragging');
     document.addEventListener('mousemove', onDragHandleMouseMove);
     document.addEventListener('mouseup', onDragHandleMouseUp);
@@ -726,18 +785,12 @@ function onDragHandleMouseDown(e) {
 
 function onDragHandleMouseMove(e) {
     if (!dragState) return;
-
     var deltaY = e.clientY - dragState.startY;
     var deltaRatio = deltaY / dragState.containerHeight;
-
     var ratios = dragState.startRatios.slice();
     var idx = dragState.handleIdx;
-
-    // 调整相邻两个面板的比例
     ratios[idx] += deltaRatio;
     ratios[idx + 1] -= deltaRatio;
-
-    // 限制最小高度 5%
     var minRatio = 0.05;
     if (ratios[idx] < minRatio) {
         ratios[idx + 1] += ratios[idx] - minRatio;
@@ -747,12 +800,8 @@ function onDragHandleMouseMove(e) {
         ratios[idx] += ratios[idx + 1] - minRatio;
         ratios[idx + 1] = minRatio;
     }
-
-    // 保存比例
     var key = dragState.windowIdx + '_' + (windowPeriods[dragState.windowIdx] || '1m');
     gridRatios[key] = ratios;
-
-    // 更新图表
     var chart = charts[dragState.windowIdx];
     if (chart) {
         chart.setOption({ grid: getChartGrids(dragState.windowIdx) });
@@ -762,17 +811,16 @@ function onDragHandleMouseMove(e) {
 
 function onDragHandleMouseUp(e) {
     if (!dragState) return;
-
     var container = document.getElementById('chart-' + dragState.windowIdx);
     if (container) {
         var handles = container.querySelectorAll('.grid-drag-handle');
         handles.forEach(function(h) { h.classList.remove('dragging'); });
     }
-
     dragState = null;
     document.removeEventListener('mousemove', onDragHandleMouseMove);
     document.removeEventListener('mouseup', onDragHandleMouseUp);
 }
+
 
 function fetchKlineData(inst, period, windowIdx) {
     var url = API_BASE + '/api/klines?inst=' + encodeURIComponent(inst) + '&period=' + encodeURIComponent(period);
@@ -783,13 +831,76 @@ function fetchKlineData(inst, period, windowIdx) {
                 debugLog("K线错误: " + data.error, "error");
                 return;
             }
+            // [NEW] 缓存指标数据
+            if (data.indicators) {
+                windowIndicators[windowIdx] = data.indicators;
+                // 如果这是当前选中的窗口，更新右侧面板
+                if (windowIdx === selectedWindow) {
+                    updateIndicatorDashboard(data.indicators);
+                }
+            }
             updateChart(windowIdx, inst, period, data);
-            // [FIX-GRID] 更新拖拽手柄位置
             setTimeout(function() { updateDragHandlePositions(windowIdx); }, 100);
         })
         .catch(function(err) {
             debugLog("获取K线失败 " + inst + ": " + err.message, "error");
         });
+}
+
+// [NEW] 更新右侧指标面板
+function updateIndicatorDashboard(indicators) {
+    if (!indicators) return;
+
+    var keyLevels = indicators.key_levels || {};
+    document.getElementById('kl-pivot').textContent = keyLevels.pivot || '--';
+    document.getElementById('kl-r1').textContent = keyLevels.r1 || '--';
+    document.getElementById('kl-s1').textContent = keyLevels.s1 || '--';
+    document.getElementById('kl-r2').textContent = keyLevels.r2 || '--';
+    document.getElementById('kl-s2').textContent = keyLevels.s2 || '--';
+    document.getElementById('kl-r3').textContent = keyLevels.r3 || '--';
+    document.getElementById('kl-s3').textContent = keyLevels.s3 || '--';
+
+    var vwapData = indicators.vwap || [];
+    var cvdData = indicators.cvd || [];
+    var cvdSlopeData = indicators.cvd_slope || [];
+    var noiZData = indicators.noi_zscore || [];
+    var volZData = indicators.volume_zscore || [];
+
+    var lastVwap = vwapData.length > 0 ? vwapData[vwapData.length - 1] : '--';
+    var lastCvd = cvdData.length > 0 ? cvdData[cvdData.length - 1] : '--';
+    var lastCvdSlope = cvdSlopeData.length > 0 ? cvdSlopeData[cvdSlopeData.length - 1] : '--';
+    var lastNoiZ = noiZData.length > 0 ? noiZData[noiZData.length - 1] : '--';
+    var lastVolZ = volZData.length > 0 ? volZData[volZData.length - 1] : '--';
+    var currentSpread = indicators.current_spread || 0;
+    var spreadSpike = indicators.spread_spike || false;
+
+    var vwapEl = document.getElementById('dash-vwap');
+    vwapEl.textContent = typeof lastVwap === 'number' ? lastVwap.toFixed(2) : lastVwap;
+
+    var cvdEl = document.getElementById('dash-cvd');
+    cvdEl.textContent = typeof lastCvd === 'number' ? (lastCvd >= 0 ? '+' : '') + lastCvd : lastCvd;
+    cvdEl.className = 'dash-value ' + (typeof lastCvd === 'number' ? (lastCvd >= 0 ? 'buy' : 'sell') : 'neutral');
+
+    var cvdSlopeEl = document.getElementById('dash-cvd-slope');
+    cvdSlopeEl.textContent = typeof lastCvdSlope === 'number' ? (lastCvdSlope >= 0 ? '▲ ' : '▼ ') + Math.abs(lastCvdSlope).toFixed(1) : lastCvdSlope;
+    cvdSlopeEl.className = 'dash-value ' + (typeof lastCvdSlope === 'number' ? (lastCvdSlope >= 0 ? 'buy' : 'sell') : 'neutral');
+
+    var noiZEl = document.getElementById('dash-noi-z');
+    noiZEl.textContent = typeof lastNoiZ === 'number' ? lastNoiZ.toFixed(2) : lastNoiZ;
+    noiZEl.className = 'dash-value ' + (typeof lastNoiZ === 'number' ? (lastNoiZ > 1 ? 'buy' : lastNoiZ < -1 ? 'sell' : 'neutral') : 'neutral');
+
+    var volZEl = document.getElementById('dash-vol-z');
+    volZEl.textContent = typeof lastVolZ === 'number' ? lastVolZ.toFixed(2) : lastVolZ;
+    volZEl.className = 'dash-value ' + (typeof lastVolZ === 'number' ? (lastVolZ > 2 ? 'buy' : lastVolZ < -2 ? 'sell' : 'neutral') : 'neutral');
+
+    var spreadEl = document.getElementById('dash-spread');
+    spreadEl.textContent = currentSpread.toFixed(4);
+    if (spreadSpike) {
+        spreadEl.className = 'dash-value spike';
+        spreadEl.textContent = currentSpread.toFixed(4) + ' ⚠';
+    } else {
+        spreadEl.className = 'dash-value neutral';
+    }
 }
 
 function updateChart(windowIdx, inst, period, data) {
@@ -798,6 +909,7 @@ function updateChart(windowIdx, inst, period, data) {
 
     var klines = data.klines || [];
     var macd = data.macd || { dif: [], dea: [], macd: [] };
+    var indicators = data.indicators || {};
 
     if (klines.length === 0) {
         debugLog(inst + " " + period + " 无K线数据", "warn");
@@ -807,13 +919,47 @@ function updateChart(windowIdx, inst, period, data) {
     var dates = klines.map(function(k) { return k.time; });
     var candleData = klines.map(function(k) { return [k.open, k.close, k.low, k.high]; });
 
-    // 堆叠成交量: buy_vol 在下, sell_vol 在上
     var buyVolumes = klines.map(function(k) {
         return { value: k.buy_vol || 0, itemStyle: { color: '#00d4aa' } };
     });
     var sellVolumes = klines.map(function(k) {
         return { value: k.sell_vol || 0, itemStyle: { color: '#ff4757' } };
     });
+
+    // [NEW] 提取指标数据
+    var vwapData = indicators.vwap || [];
+    var cvdData = indicators.cvd || [];
+    var cvdSlopeData = indicators.cvd_slope || [];
+    var noiData = indicators.noi || [];
+    var noiZData = indicators.noi_zscore || [];
+    var volZData = indicators.volume_zscore || [];
+    var keyLevels = indicators.key_levels || {};
+    var spreadData = [];
+
+    // 为每根K线生成一个spread值（使用tick数据近似）
+    for (var i = 0; i < klines.length; i++) {
+        var bar = klines[i];
+        var spread = 0;
+        if (bar.ask && bar.bid) {
+            spread = bar.ask - bar.bid;
+        } else if (bar.high && bar.low) {
+            spread = (bar.high - bar.low) * 0.02;
+        }
+        spreadData.push({
+            value: spread,
+            itemStyle: { color: spread > (indicators.current_spread || 0) * 2 ? '#ff4757' : '#666' }
+        });
+    }
+
+    // [NEW] 构建markLine数据（关键价位）
+    var markLines = [];
+    if (keyLevels.pivot) {
+        markLines.push({ yAxis: keyLevels.pivot, name: 'Pivot', lineStyle: { color: '#f1c40f', type: 'dashed', width: 1 } });
+    }
+    if (keyLevels.r1) markLines.push({ yAxis: keyLevels.r1, name: 'R1', lineStyle: { color: '#ff6b6b', type: 'dotted', width: 1 } });
+    if (keyLevels.r2) markLines.push({ yAxis: keyLevels.r2, name: 'R2', lineStyle: { color: '#ff6b6b', type: 'dotted', width: 1 } });
+    if (keyLevels.s1) markLines.push({ yAxis: keyLevels.s1, name: 'S1', lineStyle: { color: '#00d4aa', type: 'dotted', width: 1 } });
+    if (keyLevels.s2) markLines.push({ yAxis: keyLevels.s2, name: 'S2', lineStyle: { color: '#00d4aa', type: 'dotted', width: 1 } });
 
     var option = {
         backgroundColor: 'transparent',
@@ -822,23 +968,44 @@ function updateChart(windowIdx, inst, period, data) {
         xAxis: [
             { type: 'category', data: dates, gridIndex: 0, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { color: '#666', fontSize: 9 } },
             { type: 'category', data: dates, gridIndex: 1, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { show: false } },
-            { type: 'category', data: dates, gridIndex: 2, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { color: '#666', fontSize: 9 } }
+            { type: 'category', data: dates, gridIndex: 2, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { show: false } },
+            { type: 'category', data: dates, gridIndex: 3, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { show: false } },
+            { type: 'category', data: dates, gridIndex: 4, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { show: false } },
+            { type: 'category', data: dates, gridIndex: 5, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { color: '#666', fontSize: 9 } }
         ],
         yAxis: [
             { scale: true, gridIndex: 0, splitLine: { lineStyle: { color: '#1a1f2e' } }, axisLabel: { color: '#888', fontSize: 9 } },
             { scale: true, gridIndex: 1, splitLine: { show: false }, axisLabel: { show: false } },
-            { scale: true, gridIndex: 2, splitLine: { lineStyle: { color: '#1a1f2e' } }, axisLabel: { color: '#888', fontSize: 9 } }
+            { scale: true, gridIndex: 2, splitLine: { lineStyle: { color: '#1a1f2e' } }, axisLabel: { color: '#888', fontSize: 9 } },
+            { scale: true, gridIndex: 3, splitLine: { lineStyle: { color: '#1a1f2e' } }, axisLabel: { color: '#888', fontSize: 9 } },
+            { scale: true, gridIndex: 4, splitLine: { lineStyle: { color: '#1a1f2e' } }, axisLabel: { color: '#888', fontSize: 9 } },
+            { scale: true, gridIndex: 5, splitLine: { lineStyle: { color: '#1a1f2e' } }, axisLabel: { color: '#888', fontSize: 9 } }
         ],
-        dataZoom: [{ type: 'inside', xAxisIndex: [0,1,2], start: 50, end: 100 }],
+        dataZoom: [{ type: 'inside', xAxisIndex: [0,1,2,3,4,5], start: 50, end: 100 }],
         series: [
+            // Panel 0: K线 + VWAP + Key Levels
             {
                 name: 'K线', type: 'candlestick',
                 xAxisIndex: 0, yAxisIndex: 0, data: candleData,
                 itemStyle: {
                     color: '#00d4aa', color0: '#ff4757',
                     borderColor: '#00d4aa', borderColor0: '#ff4757'
+                },
+                markLine: {
+                    symbol: 'none',
+                    label: { show: true, fontSize: 9, color: '#888', position: 'insideEndTop' },
+                    data: markLines,
+                    animation: false
                 }
             },
+            {
+                name: 'VWAP', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
+                data: vwapData.map(function(v) { return v === null || v === undefined ? null : v; }),
+                smooth: true, showSymbol: false,
+                lineStyle: { color: '#9b59b6', width: 1.5, type: 'dashed' },
+                connectNulls: false
+            },
+            // Panel 1: Volume + Volume Z-Score
             {
                 name: '主动买', type: 'bar', stack: 'volume',
                 xAxisIndex: 1, yAxisIndex: 1, data: buyVolumes, barWidth: '60%'
@@ -848,25 +1015,79 @@ function updateChart(windowIdx, inst, period, data) {
                 xAxisIndex: 1, yAxisIndex: 1, data: sellVolumes, barWidth: '60%'
             },
             {
-                name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2,
+                name: 'Vol Z-Score', type: 'line', xAxisIndex: 1, yAxisIndex: 1,
+                data: volZData.map(function(v) { return v === null || v === undefined ? null : v; }),
+                smooth: true, showSymbol: false,
+                lineStyle: { color: '#f39c12', width: 1 },
+                connectNulls: false
+            },
+            // Panel 2: CVD + CVD Slope
+            {
+                name: 'CVD', type: 'line', xAxisIndex: 2, yAxisIndex: 2,
+                data: cvdData.map(function(v) { return v === null || v === undefined ? null : v; }),
+                smooth: true, showSymbol: false,
+                lineStyle: { color: '#3498db', width: 1.5 },
+                areaStyle: { color: 'rgba(52,152,219,0.1)' },
+                connectNulls: false
+            },
+            {
+                name: 'CVD Slope', type: 'line', xAxisIndex: 2, yAxisIndex: 2,
+                data: cvdSlopeData.map(function(v) { return v === null || v === undefined ? null : v; }),
+                smooth: true, showSymbol: false,
+                lineStyle: { color: '#e74c3c', width: 1 },
+                connectNulls: false
+            },
+            // Panel 3: NOI + NOI Z-Score
+            {
+                name: 'NOI', type: 'line', xAxisIndex: 3, yAxisIndex: 3,
+                data: noiData.map(function(v) { return v === null || v === undefined ? null : v; }),
+                smooth: true, showSymbol: false,
+                lineStyle: { color: '#1abc9c', width: 1.5 },
+                connectNulls: false
+            },
+            {
+                name: 'NOI Z-Score', type: 'line', xAxisIndex: 3, yAxisIndex: 3,
+                data: noiZData.map(function(v) { return v === null || v === undefined ? null : v; }),
+                smooth: true, showSymbol: false,
+                lineStyle: { color: '#e67e22', width: 1 },
+                markLine: {
+                    symbol: 'none',
+                    silent: true,
+                    data: [
+                        { yAxis: 2, lineStyle: { color: '#00d4aa', type: 'dashed', width: 0.5 } },
+                        { yAxis: -2, lineStyle: { color: '#ff4757', type: 'dashed', width: 0.5 } },
+                        { yAxis: 0, lineStyle: { color: '#666', type: 'solid', width: 0.5 } }
+                    ]
+                },
+                connectNulls: false
+            },
+            // Panel 4: MACD
+            {
+                name: 'DIF', type: 'line', xAxisIndex: 4, yAxisIndex: 4,
                 data: (macd.dif || []).map(function(v) { return v === null || v === undefined ? null : v; }),
                 smooth: true, showSymbol: false,
                 lineStyle: { color: '#f1c40f', width: 1 },
                 connectNulls: false
             },
             {
-                name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2,
+                name: 'DEA', type: 'line', xAxisIndex: 4, yAxisIndex: 4,
                 data: (macd.dea || []).map(function(v) { return v === null || v === undefined ? null : v; }),
                 smooth: true, showSymbol: false,
                 lineStyle: { color: '#3498db', width: 1 },
                 connectNulls: false
             },
             {
-                name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2,
+                name: 'MACD', type: 'bar', xAxisIndex: 4, yAxisIndex: 4,
                 data: (macd.macd || []).map(function(v) {
                     if (v === null || v === undefined) return null;
                     return { value: v, itemStyle: { color: v >= 0 ? '#00d4aa' : '#ff4757' } };
                 }),
+                barWidth: '40%'
+            },
+            // Panel 5: Spread
+            {
+                name: 'Spread', type: 'bar', xAxisIndex: 5, yAxisIndex: 5,
+                data: spreadData,
                 barWidth: '40%'
             }
         ],
@@ -876,34 +1097,110 @@ function updateChart(windowIdx, inst, period, data) {
             borderColor: '#2a3040',
             textStyle: { color: '#e0e0e0', fontSize: 11 },
             formatter: function(params) {
-                var k = null;
+                if (!params || params.length === 0) return '';
+                var idx = params[0].dataIndex;
+                var timeLabel = params[0].name || '';
+                var kline = chart.__klines ? chart.__klines[idx] : null;
+
+                // Build value map from all series at this index
+                var vals = {};
+                for (var p = 0; p < params.length; p++) {
+                    var param = params[p];
+                    if (param && param.seriesName && param.value !== undefined && param.value !== null) {
+                        var v = param.value;
+                        if (typeof v === 'object' && v !== null && v.value !== undefined) {
+                            v = v.value;
+                        }
+                        vals[param.seriesName] = v;
+                    }
+                }
+
+                var html = '<div style="font-weight:bold;margin-bottom:6px;font-size:12px;color:#00d4aa;">' + timeLabel + '</div>';
+
+                // Panel 0: K线 + VWAP
+                var candle = null;
                 for (var p = 0; p < params.length; p++) {
                     if (params[p] && params[p].seriesType === 'candlestick') {
-                        k = params[p];
+                        candle = params[p];
                         break;
                     }
                 }
-                if (!k || !k.data) return '';
-                var d = k.data;
-                var idx = k.dataIndex;
-                var kline = chart.__klines ? chart.__klines[idx] : null;
-                if (!kline) return '';
+                if (candle && candle.data) {
+                    var d = candle.data;
+                    var ocColor = d[2] >= d[1] ? '#00ff88' : '#ff6b6b';
+                    html += '<div style="margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #333;">' +
+                        '<div style="color:#888;font-size:10px;margin-bottom:3px;">▬ K线</div>' +
+                        '<span style="color:' + ocColor + '">开 ' + d[1] + ' 收 ' + d[2] + '</span><br/>' +
+                        '低 ' + d[3] + ' 高 ' + d[4];
+                    if (kline) {
+                        html += '<br/><span style="color:#00ff88">买 ' + (kline.buy_vol || 0) + '</span> ' +
+                                '<span style="color:#ff6b6b">卖 ' + (kline.sell_vol || 0) + '</span> ' +
+                                'Δ <span style="color:' + ((kline.delta || 0) >= 0 ? '#00ff88' : '#ff6b6b') + '">' + 
+                                ((kline.delta || 0) >= 0 ? '+' : '') + (kline.delta || 0) + '</span>';
+                    }
+                    if (vals['VWAP'] !== undefined) {
+                        html += '<br/>VWAP <span style="color:#9b59b6">' + vals['VWAP'] + '</span>';
+                    }
+                    html += '</div>';
+                }
 
-                var buyVol = kline.buy_vol || 0;
-                var sellVol = kline.sell_vol || 0;
-                var delta = kline.delta || 0;
-                var deltaColor = delta >= 0 ? '#00ff88' : '#ff6b6b';
-                var deltaSign = delta >= 0 ? '+' : '';
+                // Panel 1: Volume + Vol Z-Score
+                if (vals['主动买'] !== undefined || vals['主动卖'] !== undefined || vals['Vol Z-Score'] !== undefined) {
+                    html += '<div style="margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #333;">' +
+                        '<div style="color:#888;font-size:10px;margin-bottom:3px;">▬ 成交量</div>' +
+                        '<span style="color:#00d4aa">买量 ' + (vals['主动买'] !== undefined ? vals['主动买'] : '--') + '</span> ' +
+                        '<span style="color:#ff4757">卖量 ' + (vals['主动卖'] !== undefined ? vals['主动卖'] : '--') + '</span>';
+                    if (vals['Vol Z-Score'] !== undefined) {
+                        var vzColor = vals['Vol Z-Score'] > 2 ? '#00ff88' : vals['Vol Z-Score'] < -2 ? '#ff6b6b' : '#888';
+                        html += '<br/>Vol Z-Score <span style="color:' + vzColor + '">' + vals['Vol Z-Score'] + '</span>';
+                    }
+                    html += '</div>';
+                }
 
-                return '<div style="font-weight:bold;margin-bottom:5px;">' + k.name + '</div>' +
-                    '开盘: ' + d[1] + '  收盘: ' + d[2] + '<br/>' +
-                    '最低: ' + d[3] + '  最高: ' + d[4] + '<br/>' +
-                    '成交量: ' + (kline.volume || 0) + '<br/>' +
-                    '<div style="margin-top:5px;border-top:1px solid #333;padding-top:5px;">' +
-                    '<span style="color:#00ff88">主动买: ' + buyVol + '</span>  ' +
-                    '<span style="color:#ff6b6b">主动卖: ' + sellVol + '</span><br/>' +
-                    '净Δ: <span style="color:' + deltaColor + '">' + deltaSign + delta + '</span>' +
-                    '</div>';
+                // Panel 2: CVD + CVD Slope
+                if (vals['CVD'] !== undefined || vals['CVD Slope'] !== undefined) {
+                    html += '<div style="margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #333;">' +
+                        '<div style="color:#888;font-size:10px;margin-bottom:3px;">▬ CVD</div>' +
+                        'CVD <span style="color:#3498db">' + (vals['CVD'] !== undefined ? ((vals['CVD'] >= 0 ? '+' : '') + vals['CVD']) : '--') + '</span>';
+                    if (vals['CVD Slope'] !== undefined) {
+                        var slopeColor = vals['CVD Slope'] >= 0 ? '#00ff88' : '#ff6b6b';
+                        html += '<br/>Slope <span style="color:' + slopeColor + '">' + (vals['CVD Slope'] >= 0 ? '▲ ' : '▼ ') + Math.abs(vals['CVD Slope']).toFixed(1) + '</span>';
+                    }
+                    html += '</div>';
+                }
+
+                // Panel 3: NOI + NOI Z-Score
+                if (vals['NOI'] !== undefined || vals['NOI Z-Score'] !== undefined) {
+                    html += '<div style="margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #333;">' +
+                        '<div style="color:#888;font-size:10px;margin-bottom:3px;">▬ NOI</div>' +
+                        'NOI <span style="color:#1abc9c">' + (vals['NOI'] !== undefined ? vals['NOI'].toFixed(4) : '--') + '</span>';
+                    if (vals['NOI Z-Score'] !== undefined) {
+                        var nzColor = vals['NOI Z-Score'] > 1 ? '#00ff88' : vals['NOI Z-Score'] < -1 ? '#ff6b6b' : '#888';
+                        html += '<br/>Z-Score <span style="color:' + nzColor + '">' + vals['NOI Z-Score'] + '</span>';
+                    }
+                    html += '</div>';
+                }
+
+                // Panel 4: MACD
+                if (vals['DIF'] !== undefined || vals['DEA'] !== undefined || vals['MACD'] !== undefined) {
+                    html += '<div style="margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #333;">' +
+                        '<div style="color:#888;font-size:10px;margin-bottom:3px;">▬ MACD</div>' +
+                        'DIF <span style="color:#f1c40f">' + (vals['DIF'] !== undefined ? vals['DIF'] : '--') + '</span> ' +
+                        'DEA <span style="color:#3498db">' + (vals['DEA'] !== undefined ? vals['DEA'] : '--') + '</span><br/>' +
+                        'MACD <span style="color:' + ((vals['MACD'] !== undefined && vals['MACD'] >= 0) ? '#00ff88' : '#ff6b6b') + '">' + 
+                        (vals['MACD'] !== undefined ? ((vals['MACD'] >= 0 ? '+' : '') + vals['MACD']) : '--') + '</span>' +
+                        '</div>';
+                }
+
+                // Panel 5: Spread
+                if (vals['Spread'] !== undefined) {
+                    html += '<div style="margin-bottom:6px;">' +
+                        '<div style="color:#888;font-size:10px;margin-bottom:3px;">▬ Spread</div>' +
+                        'Spread <span style="color:#e67e22">' + vals['Spread'] + '</span>' +
+                        '</div>';
+                }
+
+                return html;
             }
         }
     };
@@ -912,18 +1209,18 @@ function updateChart(windowIdx, inst, period, data) {
     chart.setOption(option, true);
 }
 
-// [FIX-GRID] 获取图表的 grid 配置 (3 panels: K线 / 堆叠成交量 / MACD)
+
+// [NEW] 6-panel grid layout
 function getChartGrids(windowIdx) {
     var key = windowIdx + '_' + (windowPeriods[windowIdx] || '1m');
     var ratios = gridRatios[key] || DEFAULT_GRID_RATIOS.slice();
     var total = ratios.reduce(function(a, b) { return a + b; }, 0);
     var normalized = ratios.map(function(r) { return r / total; });
 
-    var top = 8;  // 顶部留白 8%
-    var available = 84;  // 可用高度 84% (100% - 8% top - 8% bottom)
+    var top = 6;
+    var available = 88;
     var grids = [];
-
-    for (var i = 0; i < 3; i++) {
+    for (var i = 0; i < 6; i++) {
         var height = normalized[i] * available;
         grids.push({
             left: '10%',
@@ -958,14 +1255,17 @@ function selectWindow(idx) {
     document.getElementById('right-title').textContent = name;
     document.getElementById('right-code').textContent = inst;
 
-    // [FIX-SCROLL] 切换品种时重置订单流滚动状态
+    // [NEW] 更新指标面板
+    if (windowIndicators[idx]) {
+        updateIndicatorDashboard(windowIndicators[idx]);
+    }
+
     ofUserScrolled = false;
     ofLastItemTime = "";
     if (ofAutoReturnTimer) {
         clearTimeout(ofAutoReturnTimer);
         ofAutoReturnTimer = null;
     }
-    // 清空订单流列表，等待新品种的推送数据
     var list = document.getElementById('orderflow-list');
     if (list) {
         list.innerHTML = '<div style="text-align:center; color:#666; padding-top:50px;">加载中...</div>';
@@ -977,7 +1277,6 @@ function selectWindow(idx) {
     debugLog('选中主窗口: ' + idx + ' (' + inst + ')', 'info');
 }
 
-// [FIX-2] 增强订单流更新，添加高亮动画
 function updateOrderflow(items) {
     var list = document.getElementById('orderflow-list');
     if (!items || items.length === 0) {
@@ -987,45 +1286,30 @@ function updateOrderflow(items) {
         return;
     }
 
-    // [FIX-FILTER] 过滤掉 buy_vol=0 且 sell_vol=0 的无意义数据
     var filteredItems = items.filter(function(item) {
         return (item.buy_vol || 0) > 0 || (item.sell_vol || 0) > 0;
     });
 
-    if (filteredItems.length === 0) {
-        return;
-    }
+    if (filteredItems.length === 0) return;
 
-    // [FIX-SCROLL] 追加模式：只添加真正的新数据，保留已有历史
-    // 获取当前列表中已有的时间戳集合（用于去重）
     var existingTimes = {};
     var children = list.querySelectorAll('.orderflow-item');
     for (var i = 0; i < children.length; i++) {
         var timeEl = children[i].querySelector('.time');
-        if (timeEl) {
-            existingTimes[timeEl.textContent] = true;
-        }
+        if (timeEl) existingTimes[timeEl.textContent] = true;
     }
 
-    // 过滤出真正的新数据（不在已有列表中的）
     var newItems = filteredItems.filter(function(item) {
         return !existingTimes[item.time || ''];
     });
 
-    if (newItems.length === 0) {
-        return; // 没有新数据，不做任何更新
-    }
+    if (newItems.length === 0) return;
 
-    // 清除"暂无数据"提示（如果存在）
     if (list.children.length === 1 && list.children[0].textContent.indexOf('暂无') >= 0) {
         list.innerHTML = '';
     }
 
-    // 计算统计（基于全部可见数据）
     var buyTotal = 0, sellTotal = 0, deltaTotal = 0;
-    var allItems = [];
-
-    // 收集已有数据
     for (var i = 0; i < children.length; i++) {
         var buyV = parseInt(children[i].querySelector('.buy-v').textContent) || 0;
         var sellV = parseInt(children[i].querySelector('.sell-v').textContent) || 0;
@@ -1035,28 +1319,20 @@ function updateOrderflow(items) {
         deltaTotal += deltaV;
     }
 
-    // [FIX-SCROLL] 获取当前最后一条可见数据的时间，用于判断哪些是"新"数据
     var currentLastTime = ofLastItemTime;
-
-    // 追加新数据到列表底部
     var fragment = document.createDocumentFragment();
     newItems.forEach(function(item) {
         var cls = item.aggressor === 'BUY' ? 'buy' : item.aggressor === 'SELL' ? 'sell' : 'mix';
         var dirText = item.aggressor === 'BUY' ? '买' : item.aggressor === 'SELL' ? '卖' : '混';
-
         buyTotal += item.buy_vol || 0;
         sellTotal += item.sell_vol || 0;
         deltaTotal += item.delta || 0;
-
         var price = (item.price || 0).toFixed(2);
         var deltaStr = (item.delta || 0) >= 0 ? '+' + (item.delta || 0) : '' + (item.delta || 0);
         var deltaColor = (item.delta || 0) >= 0 ? '#00d4aa' : '#ff4757';
-
-        // [FIX-SCROLL] 新数据高亮：基于时间戳判断
         var itemTime = (item.time || '') + (item.millisec ? '.' + item.millisec : '');
         var isNew = itemTime > currentLastTime;
         var flashClass = isNew ? ' flash-new' : '';
-
         var div = document.createElement('div');
         div.className = 'orderflow-item ' + cls + flashClass;
         div.innerHTML =
@@ -1072,11 +1348,9 @@ function updateOrderflow(items) {
 
     list.appendChild(fragment);
 
-    // [FIX-SCROLL] 限制最大显示条数为 500，超出则从顶部删除
     var maxDisplay = 500;
     while (list.children.length > maxDisplay) {
         var firstChild = list.children[0];
-        // 从统计中减去被删除的数据
         var buyV = parseInt(firstChild.querySelector('.buy-v').textContent) || 0;
         var sellV = parseInt(firstChild.querySelector('.sell-v').textContent) || 0;
         var deltaV = parseInt(firstChild.querySelector('.delta').textContent) || 0;
@@ -1086,12 +1360,10 @@ function updateOrderflow(items) {
         list.removeChild(firstChild);
     }
 
-    // [FIX-SCROLL] 智能滚动：用户上滚查看历史时，不自动跳底；否则自动滚到最新
     if (!ofUserScrolled) {
         list.scrollTop = list.scrollHeight;
     }
 
-    // [FIX-SCROLL] 更新最后一条数据的时间戳
     if (filteredItems.length > 0) {
         var lastItem = filteredItems[filteredItems.length - 1];
         ofLastItemTime = (lastItem.time || '') + (lastItem.millisec ? '.' + lastItem.millisec : '');
@@ -1103,7 +1375,6 @@ function updateOrderflow(items) {
     deltaEl.textContent = (deltaTotal >= 0 ? '+' : '') + deltaTotal;
     deltaEl.style.color = deltaTotal >= 0 ? '#00d4aa' : '#ff4757';
 
-    // [FIX-UI-4] 更新订单流统计信息
     var ofStatLabel = document.getElementById('of-stat-label');
     var ofTimeRange = document.getElementById('of-time-range');
     if (ofStatLabel) {
@@ -1119,15 +1390,13 @@ function updateOrderflow(items) {
     }
 }
 
-// [FIX-KLINE] 实时更新 K 线图表
+// [NEW] 实时更新K线图表（包含新指标）
 function updateKlineRealtime(klineUpdate) {
     for (var i = 0; i < windowMode; i++) {
         var inst = windowInstruments[i];
         if (!inst) continue;
-
         var chart = charts[i];
         if (!chart) continue;
-
         var period = windowPeriods[i] || '1m';
         var instKlines = klineUpdate[inst];
         if (!instKlines) continue;
@@ -1139,40 +1408,38 @@ function updateKlineRealtime(klineUpdate) {
 
         var dates = option.xAxis[0].data || [];
         var lastDate = dates[dates.length - 1];
-
         var candleData = option.series[0].data || [];
-        var buyVolData = option.series[1].data || [];
-        var sellVolData = option.series[2].data || [];
-        var difData = option.series[3] ? option.series[3].data || [] : [];
-        var deaData = option.series[4] ? option.series[4].data || [] : [];
-        var macdData = option.series[5] ? option.series[5].data || [] : [];
+        var vwapData = option.series[1] ? option.series[1].data || [] : [];
+        var buyVolData = option.series[2].data || [];
+        var sellVolData = option.series[3].data || [];
+        var volZData = option.series[4] ? option.series[4].data || [] : [];
+        var cvdData = option.series[5] ? option.series[5].data || [] : [];
+        var cvdSlopeData = option.series[6] ? option.series[6].data || [] : [];
+        var noiData = option.series[7] ? option.series[7].data || [] : [];
+        var noiZData = option.series[8] ? option.series[8].data || [] : [];
+        var difData = option.series[9] ? option.series[9].data || [] : [];
+        var deaData = option.series[10] ? option.series[10].data || [] : [];
+        var macdData = option.series[11] ? option.series[11].data || [] : [];
+        var spreadData = option.series[12] ? option.series[12].data || [] : [];
 
         if (!chart.__klines) chart.__klines = [];
         var klinesCache = chart.__klines;
-
-        // [FIX-MACD] 处理实时MACD更新
         var liveMacd = bar.live_macd || null;
 
         if (lastDate === bar.time) {
-            // 更新最后一根 K 线
             var lastIdx = candleData.length - 1;
             candleData[lastIdx] = [bar.open, bar.close, bar.low, bar.high];
-
             buyVolData[lastIdx] = { value: bar.buy_vol || 0, itemStyle: { color: '#00d4aa' } };
             sellVolData[lastIdx] = { value: bar.sell_vol || 0, itemStyle: { color: '#ff4757' } };
 
             if (klinesCache[lastIdx]) {
                 klinesCache[lastIdx] = {
-                    time: bar.time,
-                    open: bar.open, close: bar.close, low: bar.low, high: bar.high,
-                    volume: bar.volume,
-                    buy_vol: bar.buy_vol || 0,
-                    sell_vol: bar.sell_vol || 0,
-                    delta: bar.delta || 0
+                    time: bar.time, open: bar.open, close: bar.close, low: bar.low, high: bar.high,
+                    volume: bar.volume, buy_vol: bar.buy_vol || 0, sell_vol: bar.sell_vol || 0,
+                    delta: bar.delta || 0, vwap: bar.vwap || 0, cvd: bar.cvd || 0, noi: bar.noi || 0
                 };
             }
 
-            // [FIX-MACD] 更新最后一根bar的MACD值
             if (liveMacd && difData.length > 0) {
                 var macdLastIdx = difData.length - 1;
                 difData[macdLastIdx] = liveMacd.dif;
@@ -1183,23 +1450,55 @@ function updateKlineRealtime(klineUpdate) {
                 };
             }
         } else {
-            // 新增一根 K 线
             dates.push(bar.time);
             candleData.push([bar.open, bar.close, bar.low, bar.high]);
-
             buyVolData.push({ value: bar.buy_vol || 0, itemStyle: { color: '#00d4aa' } });
             sellVolData.push({ value: bar.sell_vol || 0, itemStyle: { color: '#ff4757' } });
-
             klinesCache.push({
-                time: bar.time,
-                open: bar.open, close: bar.close, low: bar.low, high: bar.high,
-                volume: bar.volume,
-                buy_vol: bar.buy_vol || 0,
-                sell_vol: bar.sell_vol || 0,
-                delta: bar.delta || 0
+                time: bar.time, open: bar.open, close: bar.close, low: bar.low, high: bar.high,
+                volume: bar.volume, buy_vol: bar.buy_vol || 0, sell_vol: bar.sell_vol || 0,
+                delta: bar.delta || 0, vwap: bar.vwap || 0, cvd: bar.cvd || 0, noi: bar.noi || 0
             });
 
-            // [FIX-MACD] 新增bar时使用实时MACD或复制最后一个有效值
+            // Push VWAP
+            vwapData.push(bar.vwap !== undefined && bar.vwap !== null ? bar.vwap : null);
+
+            // Push Vol Z-Score (carry forward last or null)
+            var lastVolZ = volZData.length > 0 ? volZData[volZData.length - 1] : null;
+            volZData.push(lastVolZ !== undefined && lastVolZ !== null ? lastVolZ : null);
+
+            // Push CVD
+            cvdData.push(bar.cvd !== undefined && bar.cvd !== null ? bar.cvd : null);
+
+            // Push CVD Slope (carry forward last or null)
+            var lastCvdSlope = cvdSlopeData.length > 0 ? cvdSlopeData[cvdSlopeData.length - 1] : null;
+            cvdSlopeData.push(lastCvdSlope !== undefined && lastCvdSlope !== null ? lastCvdSlope : null);
+
+            // Push NOI
+            noiData.push(bar.noi !== undefined && bar.noi !== null ? bar.noi : null);
+
+            // Push NOI Z-Score (carry forward last or null)
+            var lastNoiZ = noiZData.length > 0 ? noiZData[noiZData.length - 1] : null;
+            noiZData.push(lastNoiZ !== undefined && lastNoiZ !== null ? lastNoiZ : null);
+
+            // Push Spread (from bar's ask/bid or last known)
+            var barSpread = 0;
+            if (bar.ask && bar.bid) {
+                barSpread = Math.round((bar.ask - bar.bid) * 10000) / 10000;
+            }
+            if (barSpread === 0 && bar.spread) {
+                barSpread = bar.spread;
+            }
+            var lastSpread = spreadData.length > 0 ? spreadData[spreadData.length - 1] : null;
+            if (typeof lastSpread === 'object' && lastSpread !== null && lastSpread.value !== undefined) {
+                lastSpread = lastSpread.value;
+            }
+            var pushSpread = barSpread || lastSpread || 0;
+            spreadData.push({
+                value: pushSpread,
+                itemStyle: { color: pushSpread > (lastSpread || 0) * 2 ? '#ff4757' : '#666' }
+            });
+
             if (liveMacd) {
                 difData.push(liveMacd.dif);
                 deaData.push(liveMacd.dea);
@@ -1211,16 +1510,11 @@ function updateKlineRealtime(klineUpdate) {
                 var lastDif = difData.length > 0 ? difData[difData.length - 1] : null;
                 var lastDea = deaData.length > 0 ? deaData[deaData.length - 1] : null;
                 var lastMacd = macdData.length > 0 ? macdData[macdData.length - 1] : null;
-                if (lastMacd && typeof lastMacd === 'object' && lastMacd.value !== undefined) {
-                    lastMacd = lastMacd.value;
-                }
+                if (lastMacd && typeof lastMacd === 'object' && lastMacd.value !== undefined) lastMacd = lastMacd.value;
                 difData.push(lastDif !== null && lastDif !== undefined ? lastDif : null);
                 deaData.push(lastDea !== null && lastDea !== undefined ? lastDea : null);
                 if (lastMacd !== null && lastMacd !== undefined) {
-                    macdData.push({
-                        value: lastMacd,
-                        itemStyle: { color: lastMacd >= 0 ? '#00d4aa' : '#ff4757' }
-                    });
+                    macdData.push({ value: lastMacd, itemStyle: { color: lastMacd >= 0 ? '#00d4aa' : '#ff4757' } });
                 } else {
                     macdData.push(null);
                 }
@@ -1231,43 +1525,53 @@ function updateKlineRealtime(klineUpdate) {
                 candleData.shift();
                 buyVolData.shift();
                 sellVolData.shift();
+                volZData.shift();
+                cvdData.shift();
+                cvdSlopeData.shift();
+                noiData.shift();
+                noiZData.shift();
                 difData.shift();
                 deaData.shift();
                 macdData.shift();
+                spreadData.shift();
+                vwapData.shift();
                 klinesCache.shift();
             }
         }
 
         chart.__klines = klinesCache;
-
         chart.setOption({
             xAxis: [
-                { data: dates },
-                { data: dates },
-                { data: dates }
+                { data: dates }, { data: dates }, { data: dates },
+                { data: dates }, { data: dates }, { data: dates }
             ],
             grid: getChartGrids(i),
             series: [
                 { data: candleData },
+                { data: vwapData },
                 { data: buyVolData },
                 { data: sellVolData },
+                { data: volZData },
+                { data: cvdData },
+                { data: cvdSlopeData },
+                { data: noiData },
+                { data: noiZData },
                 { data: difData },
                 { data: deaData },
-                { data: macdData }
+                { data: macdData },
+                { data: spreadData }
             ]
         });
     }
 }
 
+
 function switchSource() {
     var newSource = currentSource === 'mock' ? 'ctp' : 'mock';
     debugLog('切换数据源: ' + newSource, 'info');
-
-    // 禁用按钮防止重复点击
     var btn = document.getElementById('btnSource');
     btn.disabled = true;
     btn.textContent = '切换中...';
-
     fetch(API_BASE + '/api/source?source=' + newSource, { method: 'POST' })
         .then(function(r) { 
             if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -1308,13 +1612,10 @@ function updateSourceButton() {
 }
 
 function connectWS() {
-    // [FIX] 防止重复连接
     if (isConnected || isConnecting) {
         debugLog("已经连接或连接中", "warn");
         return;
     }
-
-    // [FIX] 清理旧定时器
     if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
@@ -1323,7 +1624,6 @@ function connectWS() {
         clearInterval(heartbeatTimer);
         heartbeatTimer = null;
     }
-
     isConnecting = true;
     debugLog("连接: " + WS_URL, "info");
     document.getElementById('conn-status').textContent = "连接中...";
@@ -1331,8 +1631,6 @@ function connectWS() {
 
     try {
         ws = new WebSocket(WS_URL);
-
-        // 心跳检测 - 使用全局变量
         var lastPongTime = Date.now();
 
         ws.onopen = function() {
@@ -1341,11 +1639,10 @@ function connectWS() {
             document.getElementById('conn-status').textContent = "已连接";
             document.getElementById('conn-status').classList.add('connected');
             isConnected = true;
-            isConnecting = false;  // [FIX] 连接成功
+            isConnecting = false;
             document.getElementById('btnConnect').textContent = "断开";
             document.getElementById('btnConnect').disabled = false;
 
-            // 连接成功后请求最新配置（延迟100ms确保连接稳定）
             setTimeout(function() {
                 if (ws && ws.readyState === WebSocket.OPEN) {
                     console.log('[WS] 发送 get_config');
@@ -1353,17 +1650,14 @@ function connectWS() {
                 }
             }, 100);
 
-            // 启动心跳检测
             heartbeatTimer = setInterval(function() {
                 if (ws && ws.readyState === WebSocket.OPEN) {
                     var elapsed = Date.now() - lastPongTime;
-                    // 如果15秒没收到任何消息，认为连接已死，主动重连
                     if (elapsed > 15000) {
                         console.warn('[WS] 15秒未收到数据，连接可能已死，主动断开重连');
                         ws.close();
                         return;
                     }
-                    // 如果8秒没收到消息，发送ping探测
                     if (elapsed > 8000) {
                         console.log('[WS] 8秒无数据，发送ping探测');
                         ws.send(JSON.stringify({action: 'ping'}));
@@ -1373,9 +1667,7 @@ function connectWS() {
         };
 
         ws.onmessage = function(event) {
-            lastPongTime = Date.now();  // 更新最后收到消息时间
-
-            // 记录原始数据长度（用于调试）
+            lastPongTime = Date.now();
             if (event.data.length < 200) {
                 console.log('[WS] 收到消息:', event.data.substring(0, 100));
             } else {
@@ -1384,14 +1676,10 @@ function connectWS() {
 
             try {
                 var data = JSON.parse(event.data);
-
-                // [FIX] 显式处理pong
                 if (data.type === 'pong') {
                     console.log('[WS] 收到pong');
                     return;
                 }
-
-                // 调试：记录收到的消息类型
                 if (data.type) {
                     console.log('[WS] 解析成功:', data.type, 'instruments:', Object.keys(data.instruments || {}).length, 'orderflow:', (data.selected_orderflow || []).length);
                 }
@@ -1399,14 +1687,8 @@ function connectWS() {
                 if (data.type === 'init' || data.type === 'update') {
                     if (data.window_config) {
                         windowMode = data.window_config.mode || windowMode;
-                        // [FIX-KLINE] 不再覆盖 windowInstruments，信任前端用户选择
-                        // 后端 window_config 只作为参考，不强制同步
-                        // if (data.window_config.windows) {
-                        //     windowInstruments = data.window_config.windows;
-                        // }
                     }
 
-                    // [FIX-3] 修复价格更新逻辑：正确添加/移除class + 闪烁效果
                     if (data.instruments) {
                         for (var inst in data.instruments) {
                             var info = data.instruments[inst];
@@ -1416,23 +1698,17 @@ function connectWS() {
                                     if (priceEl && info.last_price !== undefined && info.last_price !== null) {
                                         var oldPrice = lastPrices[inst];
                                         var newPrice = parseFloat(info.last_price);
-                                        
                                         if (isNaN(newPrice)) {
                                             console.warn('[UI] 价格无效:', inst, info.last_price);
                                             continue;
                                         }
-
                                         priceEl.textContent = newPrice.toFixed(2);
-
-                                        // [FIX-3] 正确添加/移除class
                                         priceEl.classList.remove('down', 'up', 'flash-up', 'flash-down');
                                         if (info.delta < 0) {
                                             priceEl.classList.add('down');
                                         } else if (info.delta > 0) {
                                             priceEl.classList.add('up');
                                         }
-
-                                        // [FIX-3] 价格变动时添加闪烁效果
                                         if (oldPrice !== undefined && newPrice !== oldPrice) {
                                             if (newPrice > oldPrice) {
                                                 priceEl.classList.add('flash-up');
@@ -1445,7 +1721,6 @@ function connectWS() {
                                                 };
                                             }(priceEl), 600);
                                         }
-
                                         lastPrices[inst] = newPrice;
                                     }
                                 }
@@ -1461,7 +1736,6 @@ function connectWS() {
                         }
                     }
 
-                    // [FIX-KLINE] 实时更新 K 线图表
                     if (data.kline_update) {
                         try {
                             updateKlineRealtime(data.kline_update);
@@ -1469,7 +1743,6 @@ function connectWS() {
                             console.error('[UI] updateKlineRealtime 错误:', e);
                         }
                     }
-                    // [FIX-UI-5] 接收后端推送的订单流统计信息
                     if (data.orderflow_stats) {
                         var ofStatLabel = document.getElementById('of-stat-label');
                         var ofTimeRange = document.getElementById('of-time-range');
@@ -1494,7 +1767,6 @@ function connectWS() {
                     updateSourceButton();
                     debugLog('数据源切换: ' + data.source + (data.reason ? ' (' + data.reason + ')' : ''), 'info');
                 } else if (data.type === 'config') {
-                    // [FIX-4] 处理配置响应
                     if (data.data_source && data.data_source !== currentSource) {
                         currentSource = data.data_source;
                         updateSourceButton();
@@ -1511,7 +1783,7 @@ function connectWS() {
 
         ws.onerror = function(err) {
             console.error('[WS] onerror:', err);
-            isConnecting = false;  // [FIX]
+            isConnecting = false;
             debugLog("WebSocket 错误 (readyState:" + (ws ? ws.readyState : 'null') + ")", "error");
             document.getElementById('conn-status').textContent = "错误";
             document.getElementById('btnConnect').disabled = false;
@@ -1523,17 +1795,13 @@ function connectWS() {
             document.getElementById('conn-status').textContent = "断开";
             document.getElementById('conn-status').classList.remove('connected');
             isConnected = false;
-            isConnecting = false;  // [FIX]
+            isConnecting = false;
             document.getElementById('btnConnect').textContent = "连接";
             document.getElementById('btnConnect').disabled = false;
-
-            // [FIX] 清理全局心跳
             if (heartbeatTimer) {
                 clearInterval(heartbeatTimer);
                 heartbeatTimer = null;
             }
-
-            // [FIX] 只有非正常断开才重连
             if (!event.wasClean || event.code !== 1000) {
                 reconnectTimer = setTimeout(function() {
                     debugLog("自动重连...", "info");
@@ -1541,7 +1809,6 @@ function connectWS() {
                 }, 3000);
             }
         };
-
     } catch (e) {
         debugLog("创建连接失败: " + e.message, "error");
         document.getElementById('btnConnect').disabled = false;
@@ -1549,7 +1816,6 @@ function connectWS() {
 }
 
 function disconnectWS() {
-    // [FIX] 清理所有定时器
     if (heartbeatTimer) {
         clearInterval(heartbeatTimer);
         heartbeatTimer = null;
@@ -1558,18 +1824,16 @@ function disconnectWS() {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
     }
-
     if (ws) {
         try {
-            ws.close(1000, "手动断开");  // 正常关闭
+            ws.close(1000, "手动断开");
         } catch(e) {
             console.error('[WS] 关闭错误:', e);
         }
         ws = null;
     }
-
     isConnected = false;
-    isConnecting = false;  // [FIX]
+    isConnecting = false;
     document.getElementById('conn-status').textContent = "断开";
     document.getElementById('conn-status').classList.remove('connected');
     document.getElementById('btnConnect').textContent = "连接";
@@ -1585,7 +1849,6 @@ function toggleConnection() {
 }
 
 // ==================== 页面加载 ====================
-// [FIX-4] 调整初始化顺序：先获取数据源状态，再初始化布局
 document.addEventListener('DOMContentLoaded', function() {
     debugLog('页面加载，品种库: ' + ALL_INSTRUMENTS.length + '个', 'info');
 
@@ -1595,28 +1858,22 @@ document.addEventListener('DOMContentLoaded', function() {
     var btnSource = document.getElementById('btnSource');
     if (btnSource) btnSource.addEventListener('click', switchSource);
 
-    // [FIX-SCROLL] 订单流列表滚动监听
     var ofList = document.getElementById('orderflow-list');
     if (ofList) {
         ofList.addEventListener('scroll', function() {
-            // 判断是否滚动到底部（容差5px）
             var atBottom = ofList.scrollTop + ofList.clientHeight >= ofList.scrollHeight - 5;
             if (!atBottom) {
-                // 用户向上滚动查看历史，标记为手动滚动
                 ofUserScrolled = true;
-                // 清除之前的自动回底定时器
                 if (ofAutoReturnTimer) {
                     clearTimeout(ofAutoReturnTimer);
                     ofAutoReturnTimer = null;
                 }
-                // 15秒后自动回到底部
                 ofAutoReturnTimer = setTimeout(function() {
                     ofUserScrolled = false;
                     ofList.scrollTop = ofList.scrollHeight;
                     debugLog('订单流自动回到底部', 'info');
                 }, 15000);
             } else {
-                // 用户滚回底部，取消手动滚动标记
                 ofUserScrolled = false;
                 if (ofAutoReturnTimer) {
                     clearTimeout(ofAutoReturnTimer);
@@ -1626,17 +1883,13 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // [FIX-4] 先获取数据源状态，确保初始化时状态正确
     fetch(API_BASE + '/api/source')
         .then(function(r) { return r.json(); })
         .then(function(data) {
             currentSource = data.source || 'mock';
             updateSourceButton();
             debugLog('数据源状态: ' + currentSource, 'info');
-
-            // 状态获取后再初始化布局
             initLayout();
-            // 延迟连接WebSocket，确保布局已渲染
             setTimeout(connectWS, 500);
         })
         .catch(function(err) {
