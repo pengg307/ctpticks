@@ -286,21 +286,7 @@
         .orderflow-item.mix { background: rgba(136,136,136,0.05); }
         .orderflow-item .time { width: 55px; color: #666; font-size: 10px; }
         .orderflow-item .price { width: 65px; text-align: right; }
-        .orderflow-item .vol { width: 35px; text-align: center; font-size: 10px; }
-        .orderflow-item .buy-v { width: 40px; text-align: right; color: #00d4aa; font-size: 10px; }
-        .orderflow-item .sell-v { width: 40px; text-align: right; color: #ff4757; font-size: 10px; }
         .orderflow-item .delta { width: 45px; text-align: right; font-weight: bold; font-size: 10px; }
-        .orderflow-item .dir {
-            width: 26px;
-            text-align: center;
-            font-size: 9px;
-            border-radius: 3px;
-            padding: 1px 0;
-            margin-left: 4px;
-        }
-        .orderflow-item.buy .dir { background: #00d4aa; color: #000; }
-        .orderflow-item.sell .dir { background: #ff4757; color: #fff; }
-        .orderflow-item.mix .dir { background: #666; color: #fff; }
         .stats-bar {
             height: 56px;
             background: #1a1f2e;
@@ -420,9 +406,8 @@
             .orderflow-item { font-size: 10px; padding: 2px 4px; }
             .orderflow-item .time { width: 50px; }
             .orderflow-item .price { width: 55px; }
-            .orderflow-item .vol { width: 30px; }
-            .orderflow-item .buy-v, .orderflow-item .sell-v { width: 35px; }
             .orderflow-item .delta { width: 40px; }
+            .orderflow-item .vol-bar-wrap { padding: 0 3px; min-width: 40px; }
         }
 
         .grid-drag-handle {
@@ -440,6 +425,64 @@
         }
         .grid-drag-handle.dragging {
             background: rgba(0, 212, 170, 0.6);
+        }
+
+        /* OrderFlow 可视化成交量条 */
+        .orderflow-item .vol-bar-wrap {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            padding: 0 6px;
+            min-width: 60px;
+        }
+        .orderflow-item .vol-bar {
+            flex: 1;
+            height: 14px;
+            background: rgba(136,136,136,0.08);
+            border-radius: 2px;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+        }
+        .orderflow-item .vol-buy {
+            height: 100%;
+            background: #00d4aa;
+            border-radius: 2px 0 0 2px;
+            transition: width 0.2s;
+        }
+        .orderflow-item .vol-sell {
+            height: 100%;
+            background: #ff4757;
+            border-radius: 0 2px 2px 0;
+            transition: width 0.2s;
+        }
+        .orderflow-item .vol-text {
+            position: absolute;
+            left: 0; right: 0;
+            text-align: center;
+            font-size: 9px;
+            color: #fff;
+            line-height: 14px;
+            text-shadow: 0 0 2px rgba(0,0,0,0.8);
+            pointer-events: none;
+        }
+        .orderflow-item.buy .vol-bar { background: rgba(0,212,170,0.08); }
+        .orderflow-item.sell .vol-bar { background: rgba(255,71,87,0.08); }
+
+        /* 指标卡片 hover 效果 */
+        .dash-item {
+            transition: all 0.2s;
+            position: relative;
+        }
+        .dash-item:hover {
+            border-color: #00d4aa !important;
+            background: #1a2a2a !important;
+        }
+        .key-levels-table {
+            transition: all 0.2s;
+        }
+        .key-levels-table:hover {
+            background: rgba(0,212,170,0.05);
         }
 
         ::-webkit-scrollbar { width: 4px; height: 4px; }
@@ -466,60 +509,89 @@
                 <span class="inst-title" id="right-title">--</span>
                 <span class="inst-code" id="right-code">--</span>
             </div>
-            <div class="indicator-dashboard" id="indicator-dashboard">
-                <div class="dash-title">指标面板</div>
-                <div class="dash-grid">
-                    <div class="dash-item">
-                        <div class="dash-label">Spread</div>
-                        <div class="dash-value neutral" id="dash-spread">--</div>
+
+            <!-- 紧凑指标面板 -->
+            <div class="indicator-dashboard compact" id="indicator-dashboard" style="padding:4px 8px; position:relative;">
+                <!-- 悬浮提示层 -->
+                <div id="ind-tooltip" style="display:none; position:absolute; top:0; left:0; right:0; background:rgba(10,14,26,0.98); border:1px solid #3a4050; border-radius:6px; padding:10px 12px; z-index:50; box-shadow:0 4px 20px rgba(0,0,0,0.6); font-size:11px; line-height:1.7; pointer-events:none;"></div>
+
+                <div class="dash-grid" style="grid-template-columns:1fr 1fr 1fr 1fr 1fr 1fr;">
+                    <div class="dash-item" style="padding:3px 5px; cursor:pointer;" data-tip="spread" onmouseenter="showIndTip(this)" onmouseleave="hideIndTip()">
+                        <div class="dash-label" style="font-size:8px;">Spread</div>
+                        <div class="dash-value neutral" id="dash-spread" style="font-size:11px;">--</div>
                     </div>
-                    <div class="dash-item">
-                        <div class="dash-label">Vol Z-Score</div>
-                        <div class="dash-value neutral" id="dash-vol-z">--</div>
+                    <div class="dash-item" style="padding:3px 5px; cursor:pointer;" data-tip="volz" onmouseenter="showIndTip(this)" onmouseleave="hideIndTip()">
+                        <div class="dash-label" style="font-size:8px;">VolZ</div>
+                        <div class="dash-value neutral" id="dash-vol-z" style="font-size:11px;">--</div>
                     </div>
-                    <div class="dash-item">
-                        <div class="dash-label">CVD</div>
-                        <div class="dash-value neutral" id="dash-cvd">--</div>
+                    <div class="dash-item" style="padding:3px 5px; cursor:pointer;" data-tip="cvd" onmouseenter="showIndTip(this)" onmouseleave="hideIndTip()">
+                        <div class="dash-label" style="font-size:8px;">CVD</div>
+                        <div class="dash-value neutral" id="dash-cvd" style="font-size:11px;">--</div>
                     </div>
-                    <div class="dash-item">
-                        <div class="dash-label">CVD Slope</div>
-                        <div class="dash-value neutral" id="dash-cvd-slope">--</div>
+                    <div class="dash-item" style="padding:3px 5px; cursor:pointer;" data-tip="noiz" onmouseenter="showIndTip(this)" onmouseleave="hideIndTip()">
+                        <div class="dash-label" style="font-size:8px;">NOIZ</div>
+                        <div class="dash-value neutral" id="dash-noi-z" style="font-size:11px;">--</div>
                     </div>
-                    <div class="dash-item">
-                        <div class="dash-label">NOI Z-Score</div>
-                        <div class="dash-value neutral" id="dash-noi-z">--</div>
+                    <div class="dash-item" style="padding:3px 5px; cursor:pointer;" data-tip="vwap" onmouseenter="showIndTip(this)" onmouseleave="hideIndTip()">
+                        <div class="dash-label" style="font-size:8px;">VWAP</div>
+                        <div class="dash-value neutral" id="dash-vwap" style="font-size:11px;">--</div>
                     </div>
-                    <div class="dash-item">
-                        <div class="dash-label">VWAP</div>
-                        <div class="dash-value neutral" id="dash-vwap">--</div>
+                    <div class="dash-item" style="padding:3px 5px; cursor:pointer;" data-tip="signal" onmouseenter="showIndTip(this)" onmouseleave="hideIndTip()">
+                        <div class="dash-label" style="font-size:8px;">Signal</div>
+                        <div class="dash-value neutral" id="dash-signal-mini" style="font-size:11px;">--</div>
                     </div>
                 </div>
-                <div class="key-levels-table" id="key-levels-table">
-                    <div class="kl-row"><span class="kl-label">Pivot</span><span class="kl-value pivot" id="kl-pivot">--</span></div>
-                    <div class="kl-row"><span class="kl-label">R1 / S1</span><span class="kl-value"><span class="res" id="kl-r1">--</span> / <span class="sup" id="kl-s1">--</span></span></div>
-                    <div class="kl-row"><span class="kl-label">R2 / S2</span><span class="kl-value"><span class="res" id="kl-r2">--</span> / <span class="sup" id="kl-s2">--</span></span></div>
-                    <div class="kl-row"><span class="kl-label">R3 / S3</span><span class="kl-value"><span class="res" id="kl-r3">--</span> / <span class="sup" id="kl-s3">--</span></span></div>
+
+                <!-- 关键价位一行 -->
+                <div class="key-levels-table" id="key-levels-table" style="margin-top:4px;padding-top:4px;border-top:1px solid #2a3040; cursor:pointer;" data-tip="levels" onmouseenter="showIndTip(this)" onmouseleave="hideIndTip()">
+                    <div class="kl-row" style="font-size:9px;">
+                        <span class="kl-label">P</span><span class="kl-value pivot" id="kl-pivot">--</span>
+                        <span class="kl-label" style="margin-left:6px;">R1</span><span class="kl-value res" id="kl-r1">--</span>
+                        <span class="kl-label" style="margin-left:6px;">S1</span><span class="kl-value sup" id="kl-s1">--</span>
+                        <span class="kl-label" style="margin-left:6px;">POC</span><span class="kl-value" id="dash-poc" style="color:#f1c40f;">--</span>
+                        <span class="kl-label" style="margin-left:6px;">VAH/V</span><span class="kl-value" id="dash-vah-val" style="color:#888;font-family:monospace;">--</span>
+                    </div>
+                </div>
+
+                <!-- 交易信号一行 -->
+                <div class="signal-bar" id="signal-bar" style="margin-top:4px;padding:4px 6px;background:#121826;border-radius:3px;display:flex;justify-content:space-between;align-items:center;font-size:10px;">
+                    <span style="color:#666;">信号:</span>
+                    <span id="sig-signal" style="font-weight:bold;color:#888;">--</span>
+                    <span style="color:#666;margin-left:8px;">置信:</span>
+                    <span id="sig-confidence" style="font-weight:bold;color:#888;">--</span>
+                    <span style="color:#666;margin-left:8px;">大单:</span>
+                    <span id="dash-large-count" style="font-weight:bold;color:#888;">0</span>
                 </div>
             </div>
+
+            <!-- 订单流列表 - 主要区域 -->
             <div class="orderflow-list" id="orderflow-list">
                 <div style="text-align:center; color:#666; padding-top:50px;">点击"连接"开始接收数据</div>
             </div>
-            <div class="stats-bar">
-                <div class="row">
-                    <span class="label">主动买:</span>
-                    <span class="value buy" id="stat-buy">0</span>
-                </div>
-                <div class="row">
-                    <span class="label">主动卖:</span>
-                    <span class="value sell" id="stat-sell">0</span>
-                </div>
-                <div class="row">
+
+            <div class="stats-bar" id="stats-bar">
+                <div class="row" style="align-items:center;">
+                    <span class="label">买/卖:</span>
+                    <span style="flex:1; display:flex; align-items:center; gap:4px; margin:0 8px;">
+                        <span style="flex:1; height:10px; background:rgba(0,212,170,0.15); border-radius:2px; position:relative; overflow:hidden;">
+                            <span id="stat-buy-bar" style="position:absolute; left:0; top:0; bottom:0; width:50%; background:#00d4aa; border-radius:2px; transition:width 0.3s;"></span>
+                        </span>
+                        <span id="stat-buy" class="value buy" style="font-size:10px; min-width:35px; text-align:right;">0</span>
+                        <span style="color:#444;">/</span>
+                        <span id="stat-sell" class="value sell" style="font-size:10px; min-width:35px; text-align:right;">0</span>
+                        <span style="flex:1; height:10px; background:rgba(255,71,87,0.15); border-radius:2px; position:relative; overflow:hidden;">
+                            <span id="stat-sell-bar" style="position:absolute; right:0; top:0; bottom:0; width:50%; background:#ff4757; border-radius:2px; transition:width 0.3s;"></span>
+                        </span>
+                    </span>
                     <span class="label">净Δ:</span>
-                    <span class="value" id="stat-delta">0</span>
+                    <span class="value" id="stat-delta" style="min-width:45px; text-align:right;">0</span>
                 </div>
                 <div class="row" style="margin-top:4px; border-top:1px solid #2a3040; padding-top:4px;">
                     <span class="label" id="of-stat-label">显示: 0条</span>
                     <span class="value" id="of-time-range" style="font-size:9px; color:#666;">--</span>
+                    <span style="margin-left:auto; font-size:9px; color:#666;">
+                        窗口: <span id="stats-window-size" style="color:#00d4aa; cursor:pointer;" onclick="cycleWindowSize()">150</span> ticks
+                    </span>
                 </div>
             </div>
         </div>
@@ -573,6 +645,21 @@ let windowIndicators = {};
 const DEFAULT_GRID_RATIOS = [0.35, 0.12, 0.12, 0.12, 0.12, 0.17];
 let gridRatios = {};
 
+// [NEW] Stats bar window size (configurable ticks)
+let STATS_WINDOW_SIZE = 150;  // default 150 ticks
+const STATS_WINDOW_SIZES = [50, 100, 150, 200, 300, 500, 1000];
+
+// [NEW] Rolling buffer for orderflow stats
+let orderflowStatsBuffer = {
+    buyTotal: 0,
+    sellTotal: 0,
+    deltaTotal: 0,
+    count: 0,
+    items: [],  // stores {buyVol, sellVol, delta, time}
+    firstTime: null,
+    lastTime: null
+};
+
 // ==================== 工具函数 ====================
 function debugLog(msg, type) {
     const logs = document.getElementById('debugLogs');
@@ -593,6 +680,120 @@ function escapeHtml(text) {
 
 function toggleDebug() {
     document.getElementById('debugPanel').classList.toggle('visible');
+}
+
+// [NEW] Cycle through window sizes
+function cycleWindowSize() {
+    const currentIdx = STATS_WINDOW_SIZES.indexOf(STATS_WINDOW_SIZE);
+    const nextIdx = (currentIdx + 1) % STATS_WINDOW_SIZES.length;
+    STATS_WINDOW_SIZE = STATS_WINDOW_SIZES[nextIdx];
+    document.getElementById('stats-window-size').textContent = STATS_WINDOW_SIZE;
+    debugLog('统计窗口大小切换为: ' + STATS_WINDOW_SIZE + ' ticks', 'info');
+    // Reset buffer to recalculate with new size
+    resetStatsBuffer();
+    // Re-process existing orderflow items if any
+    const list = document.getElementById('orderflow-list');
+    if (list) {
+        const items = list.querySelectorAll('.orderflow-item');
+        if (items.length > 0) {
+            // Rebuild stats from current displayed items
+            rebuildStatsFromDOM();
+        }
+    }
+}
+
+function resetStatsBuffer() {
+    orderflowStatsBuffer = {
+        buyTotal: 0,
+        sellTotal: 0,
+        deltaTotal: 0,
+        count: 0,
+        items: [],
+        firstTime: null,
+        lastTime: null
+    };
+    updateStatsDisplay();
+}
+
+function rebuildStatsFromDOM() {
+    const list = document.getElementById('orderflow-list');
+    if (!list) return;
+    const items = list.querySelectorAll('.orderflow-item');
+    resetStatsBuffer();
+    items.forEach(function(el) {
+        const buyEl = el.querySelector('.vol-buy');
+        const sellEl = el.querySelector('.vol-sell');
+        const deltaEl = el.querySelector('.delta');
+        const timeEl = el.querySelector('.time');
+        if (!buyEl || !sellEl || !deltaEl) return;
+        const buyPct = parseFloat(buyEl.style.width) || 0;
+        const sellPct = parseFloat(sellEl.style.width) || 0;
+        const totalV = parseInt(el.querySelector('.vol-text')?.textContent || 0);
+        const buyV = Math.round(totalV * buyPct / 100);
+        const sellV = Math.round(totalV * sellPct / 100);
+        const deltaV = parseInt(deltaEl.textContent) || 0;
+        const time = timeEl ? timeEl.textContent : null;
+        addToStatsBuffer(buyV, sellV, deltaV, time);
+    });
+}
+
+function addToStatsBuffer(buyV, sellV, deltaV, time) {
+    // Add to buffer
+    orderflowStatsBuffer.items.push({
+        buyVol: buyV,
+        sellVol: sellV,
+        delta: deltaV,
+        time: time || new Date().toLocaleTimeString('zh-CN', {hour12:false})
+    });
+    orderflowStatsBuffer.buyTotal += buyV;
+    orderflowStatsBuffer.sellTotal += sellV;
+    orderflowStatsBuffer.deltaTotal += deltaV;
+    orderflowStatsBuffer.count++;
+
+    // Trim to window size
+    while (orderflowStatsBuffer.items.length > STATS_WINDOW_SIZE) {
+        const removed = orderflowStatsBuffer.items.shift();
+        orderflowStatsBuffer.buyTotal -= removed.buyVol;
+        orderflowStatsBuffer.sellTotal -= removed.sellVol;
+        orderflowStatsBuffer.deltaTotal -= removed.delta;
+        orderflowStatsBuffer.count--;
+    }
+
+    // Update time range
+    if (orderflowStatsBuffer.items.length > 0) {
+        orderflowStatsBuffer.firstTime = orderflowStatsBuffer.items[0].time;
+        orderflowStatsBuffer.lastTime = orderflowStatsBuffer.items[orderflowStatsBuffer.items.length - 1].time;
+    }
+
+    updateStatsDisplay();
+}
+
+function updateStatsDisplay() {
+    const buyTotal = orderflowStatsBuffer.buyTotal;
+    const sellTotal = orderflowStatsBuffer.sellTotal;
+    const deltaTotal = orderflowStatsBuffer.deltaTotal;
+
+    document.getElementById('stat-buy').textContent = buyTotal;
+    document.getElementById('stat-sell').textContent = sellTotal;
+    const totalVol = buyTotal + sellTotal;
+    const buyPct = totalVol > 0 ? (buyTotal / totalVol * 100).toFixed(1) : 50;
+    const sellPct = totalVol > 0 ? (sellTotal / totalVol * 100).toFixed(1) : 50;
+    const buyBar = document.getElementById('stat-buy-bar');
+    const sellBar = document.getElementById('stat-sell-bar');
+    if (buyBar) buyBar.style.width = buyPct + '%';
+    if (sellBar) sellBar.style.width = sellPct + '%';
+    const deltaEl = document.getElementById('stat-delta');
+    deltaEl.textContent = (deltaTotal >= 0 ? '+' : '') + deltaTotal;
+    deltaEl.style.color = deltaTotal >= 0 ? '#00d4aa' : '#ff4757';
+
+    const ofStatLabel = document.getElementById('of-stat-label');
+    const ofTimeRange = document.getElementById('of-time-range');
+    if (ofStatLabel) {
+        ofStatLabel.textContent = '显示: ' + orderflowStatsBuffer.count + '条 (窗口' + STATS_WINDOW_SIZE + 'ticks)';
+    }
+    if (ofTimeRange && orderflowStatsBuffer.firstTime && orderflowStatsBuffer.lastTime) {
+        ofTimeRange.textContent = orderflowStatsBuffer.firstTime + ' ~ ' + orderflowStatsBuffer.lastTime;
+    }
 }
 
 // ==================== 窗口模式切换 ====================
@@ -822,6 +1023,318 @@ function onDragHandleMouseUp(e) {
 }
 
 
+function updateChart(windowIdx, inst, period, data) {
+    var chart = charts[windowIdx];
+    if (!chart) return;
+
+    var klines = data.klines || [];
+    var macd = data.macd || {dif: [], dea: [], macd: []};
+    var indicators = data.indicators || {};
+
+    var dates = [];
+    var candleData = [];
+    var buyVolData = [];
+    var sellVolData = [];
+    var vwapData = [];
+    var volZData = [];
+    var cvdData = [];
+    var cvdSlopeData = [];
+    var noiData = [];
+    var noiZData = [];
+    var difData = [];
+    var deaData = [];
+    var macdData = [];
+    var spreadData = [];
+
+    for (var i = 0; i < klines.length; i++) {
+        var bar = klines[i];
+        dates.push(bar.time);
+        candleData.push([bar.open, bar.close, bar.low, bar.high]);
+        buyVolData.push({value: bar.buy_vol || 0, itemStyle: {color: '#00d4aa'}});
+        sellVolData.push({value: bar.sell_vol || 0, itemStyle: {color: '#ff4757'}});
+    }
+
+    var vwap = indicators.vwap || [];
+    var volZ = indicators.volume_zscore || [];
+    var cvd = indicators.cvd || [];
+    var cvdSlope = indicators.cvd_slope || [];
+    var noi = indicators.noi || [];
+    var noiZ = indicators.noi_zscore || [];
+    var spread = indicators.current_spread || 0;
+    var spreadHist = [];
+
+    for (var i = 0; i < klines.length; i++) {
+        vwapData.push(i < vwap.length ? vwap[i] : null);
+        volZData.push(i < volZ.length ? volZ[i] : null);
+        cvdData.push(i < cvd.length ? cvd[i] : null);
+        cvdSlopeData.push(i < cvdSlope.length ? cvdSlope[i] : null);
+        noiData.push(i < noi.length ? noi[i] : null);
+        noiZData.push(i < noiZ.length ? noiZ[i] : null);
+        spreadData.push({value: 0, itemStyle: {color: '#666'}});
+    }
+
+    var dif = macd.dif || [];
+    var dea = macd.dea || [];
+    var macdHist = macd.macd || [];
+
+    for (var i = 0; i < klines.length; i++) {
+        difData.push(i < dif.length ? dif[i] : null);
+        deaData.push(i < dea.length ? dea[i] : null);
+        if (i < macdHist.length && macdHist[i] !== null && macdHist[i] !== undefined) {
+            macdData.push({
+                value: macdHist[i],
+                itemStyle: {color: macdHist[i] >= 0 ? '#00d4aa' : '#ff4757'}
+            });
+        } else {
+            macdData.push(null);
+        }
+    }
+
+    chart.__klines = klines.slice();
+
+    var option = {
+        backgroundColor: 'transparent',
+        animation: false,
+        tooltip: {
+            trigger: 'axis',
+            axisPointer: {type: 'cross'},
+            backgroundColor: 'rgba(10,14,26,0.95)',
+            borderColor: '#2a3040',
+            textStyle: {color: '#e0e0e0', fontSize: 10},
+            formatter: function(params) {
+                if (!params || params.length === 0) return '';
+                var idx = params[0].dataIndex;
+                var bar = klines[idx];
+                if (!bar) return '';
+                var html = '<div style="font-size:11px;font-weight:bold;margin-bottom:4px;">' + bar.time + ' ' + inst + '</div>';
+                html += '<div>O: ' + bar.open + ' C: ' + bar.close + ' H: ' + bar.high + ' L: ' + bar.low + '</div>';
+                html += '<div>Vol: ' + bar.volume + ' Δ: ' + (bar.delta >= 0 ? '+' : '') + bar.delta + '</div>';
+                if (bar.vwap) html += '<div>VWAP: ' + bar.vwap.toFixed(2) + '</div>';
+                if (bar.cvd !== undefined) html += '<div>CVD: ' + bar.cvd + '</div>';
+                if (bar.noi !== undefined) html += '<div>NOI: ' + bar.noi + '</div>';
+                return html;
+            }
+        },
+        axisPointer: {
+            link: [{xAxisIndex: 'all'}],
+            label: {backgroundColor: '#1a1f2e'}
+        },
+        grid: getChartGrids(windowIdx),
+        xAxis: [
+            {type: 'category', data: dates, gridIndex: 0, axisLine: {lineStyle: {color: '#2a3040'}}, axisLabel: {color: '#666', fontSize: 9}, splitLine: {show: false}},
+            {type: 'category', data: dates, gridIndex: 1, axisLine: {lineStyle: {color: '#2a3040'}}, axisLabel: {show: false}, splitLine: {show: false}},
+            {type: 'category', data: dates, gridIndex: 2, axisLine: {lineStyle: {color: '#2a3040'}}, axisLabel: {show: false}, splitLine: {show: false}},
+            {type: 'category', data: dates, gridIndex: 3, axisLine: {lineStyle: {color: '#2a3040'}}, axisLabel: {show: false}, splitLine: {show: false}},
+            {type: 'category', data: dates, gridIndex: 4, axisLine: {lineStyle: {color: '#2a3040'}}, axisLabel: {show: false}, splitLine: {show: false}},
+            {type: 'category', data: dates, gridIndex: 5, axisLine: {lineStyle: {color: '#2a3040'}}, axisLabel: {color: '#666', fontSize: 9}, splitLine: {show: false}}
+        ],
+        yAxis: [
+            {scale: true, gridIndex: 0, axisLine: {lineStyle: {color: '#2a3040'}}, axisLabel: {color: '#888', fontSize: 9}, splitLine: {lineStyle: {color: '#1a1f2e'}}},
+            {scale: true, gridIndex: 1, axisLine: {lineStyle: {color: '#2a3040'}}, axisLabel: {show: false}, splitLine: {show: false}},
+            {scale: true, gridIndex: 2, axisLine: {lineStyle: {color: '#2a3040'}}, axisLabel: {show: false}, splitLine: {show: false}},
+            {scale: true, gridIndex: 3, axisLine: {lineStyle: {color: '#2a3040'}}, axisLabel: {show: false}, splitLine: {show: false}},
+            {scale: true, gridIndex: 4, axisLine: {lineStyle: {color: '#2a3040'}}, axisLabel: {show: false}, splitLine: {show: false}},
+            {scale: true, gridIndex: 5, axisLine: {lineStyle: {color: '#2a3040'}}, axisLabel: {show: false}, splitLine: {show: false}}
+        ],
+        dataZoom: [{
+            type: 'inside',
+            xAxisIndex: [0, 1, 2, 3, 4, 5],
+            start: 0,
+            end: 100
+        }],
+        series: [
+            {
+                name: 'K线',
+                type: 'candlestick',
+                xAxisIndex: 0,
+                yAxisIndex: 0,
+                data: candleData,
+                itemStyle: {
+                    color: '#00d4aa',
+                    color0: '#ff4757',
+                    borderColor: '#00d4aa',
+                    borderColor0: '#ff4757'
+                }
+            },
+            {
+                name: 'VWAP',
+                type: 'line',
+                xAxisIndex: 0,
+                yAxisIndex: 0,
+                data: vwapData,
+                smooth: true,
+                symbol: 'none',
+                lineStyle: {color: '#f1c40f', width: 1}
+            },
+            {
+                name: '主动买',
+                type: 'bar',
+                xAxisIndex: 1,
+                yAxisIndex: 1,
+                data: buyVolData,
+                barWidth: '80%',
+                barGap: '-100%',
+                z: 2
+            },
+            {
+                name: '主动卖',
+                type: 'bar',
+                xAxisIndex: 1,
+                yAxisIndex: 1,
+                data: sellVolData,
+                barWidth: '80%',
+                barGap: '-100%',
+                z: 1
+            },
+            {
+                name: 'VolZ',
+                type: 'line',
+                xAxisIndex: 2,
+                yAxisIndex: 2,
+                data: volZData,
+                smooth: true,
+                symbol: 'none',
+                lineStyle: {color: '#9b59b6', width: 1},
+                markLine: {
+                    silent: true,
+                    data: [
+                        {yAxis: 2, lineStyle: {color: '#00d4aa', type: 'dashed', width: 0.5}},
+                        {yAxis: -2, lineStyle: {color: '#ff4757', type: 'dashed', width: 0.5}}
+                    ]
+                }
+            },
+            {
+                name: 'CVD',
+                type: 'line',
+                xAxisIndex: 3,
+                yAxisIndex: 3,
+                data: cvdData,
+                smooth: true,
+                symbol: 'none',
+                lineStyle: {color: '#3498db', width: 1},
+                areaStyle: {
+                    color: {
+                        type: 'linear',
+                        x: 0, y: 0, x2: 0, y2: 1,
+                        colorStops: [
+                            {offset: 0, color: 'rgba(52,152,219,0.3)'},
+                            {offset: 1, color: 'rgba(52,152,219,0.05)'}
+                        ]
+                    }
+                }
+            },
+            {
+                name: 'CVD斜率',
+                type: 'line',
+                xAxisIndex: 3,
+                yAxisIndex: 3,
+                data: cvdSlopeData,
+                smooth: true,
+                symbol: 'none',
+                lineStyle: {color: '#e67e22', width: 1}
+            },
+            {
+                name: 'NOI',
+                type: 'line',
+                xAxisIndex: 4,
+                yAxisIndex: 4,
+                data: noiData,
+                smooth: true,
+                symbol: 'none',
+                lineStyle: {color: '#1abc9c', width: 1}
+            },
+            {
+                name: 'NOIZ',
+                type: 'line',
+                xAxisIndex: 4,
+                yAxisIndex: 4,
+                data: noiZData,
+                smooth: true,
+                symbol: 'none',
+                lineStyle: {color: '#e74c3c', width: 1}
+            },
+            {
+                name: 'DIF',
+                type: 'line',
+                xAxisIndex: 5,
+                yAxisIndex: 5,
+                data: difData,
+                smooth: true,
+                symbol: 'none',
+                lineStyle: {color: '#00d4aa', width: 1}
+            },
+            {
+                name: 'DEA',
+                type: 'line',
+                xAxisIndex: 5,
+                yAxisIndex: 5,
+                data: deaData,
+                smooth: true,
+                symbol: 'none',
+                lineStyle: {color: '#ff6b6b', width: 1}
+            },
+            {
+                name: 'MACD',
+                type: 'bar',
+                xAxisIndex: 5,
+                yAxisIndex: 5,
+                data: macdData,
+                barWidth: '60%'
+            },
+            {
+                name: 'Spread',
+                type: 'line',
+                xAxisIndex: 2,
+                yAxisIndex: 2,
+                data: spreadData,
+                smooth: true,
+                symbol: 'none',
+                lineStyle: {color: '#666', width: 0.5}
+            }
+        ]
+    };
+
+    chart.setOption(option, true);
+}
+
+function getChartGrids(windowIdx) {
+    var key = windowIdx + '_' + (windowPeriods[windowIdx] || '1m');
+    var ratios = gridRatios[key] || DEFAULT_GRID_RATIOS.slice();
+    var grids = [];
+    var top = 5;
+    for (var i = 0; i < ratios.length; i++) {
+        var h = ratios[i] * 90;
+        grids.push({
+            left: '10%',
+            right: '6%',
+            top: top + '%',
+            height: h + '%',
+            containLabel: false
+        });
+        top += h + 1;
+    }
+    return grids;
+}
+
+function changePeriod(windowIdx, period) {
+    if (windowPeriods[windowIdx] === period) return;
+    windowPeriods[windowIdx] = period;
+
+    // Update button active states
+    var win = document.getElementById('window-' + windowIdx);
+    if (win) {
+        win.querySelectorAll('.period-btn').forEach(function(btn) {
+            btn.classList.toggle('active', btn.dataset.period === period);
+        });
+    }
+
+    var inst = windowInstruments[windowIdx];
+    if (inst) {
+        fetchKlineData(inst, period, windowIdx);
+        debugLog('窗口 ' + windowIdx + ' 周期 -> ' + period, 'info');
+    }
+}
+
 function fetchKlineData(inst, period, windowIdx) {
     var url = API_BASE + '/api/klines?inst=' + encodeURIComponent(inst) + '&period=' + encodeURIComponent(period);
     fetch(url)
@@ -831,12 +1344,14 @@ function fetchKlineData(inst, period, windowIdx) {
                 debugLog("K线错误: " + data.error, "error");
                 return;
             }
-            // [NEW] 缓存指标数据
+            // [NEW] 缓存指标数据 (按窗口+周期存储)
             if (data.indicators) {
-                windowIndicators[windowIdx] = data.indicators;
+                var indKey = windowIdx + '_' + period;
+                windowIndicators[indKey] = data.indicators;
                 // 如果这是当前选中的窗口，更新右侧面板
                 if (windowIdx === selectedWindow) {
                     updateIndicatorDashboard(data.indicators);
+                    updateSignalsFromIndicators(data.indicators);
                 }
             }
             updateChart(windowIdx, inst, period, data);
@@ -848,6 +1363,271 @@ function fetchKlineData(inst, period, windowIdx) {
 }
 
 // [NEW] 更新右侧指标面板
+
+// [NEW] Real-time signal update from WebSocket kline/tick data
+function updateSignalsRealtime(inst, tickInfo) {
+    if (!inst || !tickInfo) return;
+    var selectedInst = windowInstruments[selectedWindow];
+    if (inst !== selectedInst) return;
+
+    // Get current period's cached indicators for richer signal context
+    var currentPeriod = windowPeriods[selectedWindow] || '1m';
+    var indKey = selectedWindow + '_' + currentPeriod;
+    var cachedInd = windowIndicators[indKey] || {};
+
+    // Update spread from tick
+    if (tickInfo.spread !== undefined) {
+        var spreadEl = document.getElementById('dash-spread');
+        if (spreadEl) {
+            var spreadSpike = cachedInd.spread_spike || false;
+            spreadEl.textContent = tickInfo.spread.toFixed(4) + (spreadSpike ? ' ⚠' : '');
+            spreadEl.className = 'dash-value ' + (spreadSpike ? 'spike' : 'neutral');
+        }
+    }
+
+    // Update key levels from cached indicators (period-aware)
+    var keyLevels = cachedInd.key_levels || {};
+    var klPivot = document.getElementById('kl-pivot');
+    var klR1 = document.getElementById('kl-r1');
+    var klS1 = document.getElementById('kl-s1');
+    var dashPoc = document.getElementById('dash-poc');
+    var dashVahVal = document.getElementById('dash-vah-val');
+    if (klPivot) klPivot.textContent = keyLevels.pivot || '--';
+    if (klR1) klR1.textContent = keyLevels.r1 || '--';
+    if (klS1) klS1.textContent = keyLevels.s1 || '--';
+    if (dashPoc) dashPoc.textContent = (cachedInd.volume_profile || {}).poc || '--';
+    if (dashVahVal) dashVahVal.textContent = ((cachedInd.volume_profile || {}).vah || '--') + '/' + ((cachedInd.volume_profile || {}).val || '--');
+
+    // Use BAR-LEVEL data for signals, not single tick
+    var barDelta = tickInfo.bar_delta !== undefined ? tickInfo.bar_delta : tickInfo.delta;
+    var barCvd = tickInfo.bar_cvd !== undefined ? tickInfo.bar_cvd : tickInfo.delta;
+    var barVol = tickInfo.bar_volume !== undefined ? tickInfo.bar_volume : 0;
+
+    // Update CVD dashboard in real-time
+    var cvdEl = document.getElementById('dash-cvd');
+    if (cvdEl && barCvd !== undefined) {
+        cvdEl.textContent = (barCvd >= 0 ? '+' : '') + barCvd;
+        cvdEl.className = 'dash-value ' + (barCvd >= 0 ? 'buy' : 'sell');
+    }
+
+    // Update NOI-Z approximation from bar data
+    var noiZEl = document.getElementById('dash-noi-z');
+    if (noiZEl && barVol > 0) {
+        var noi = barDelta / barVol;
+        var noiZ = noi > 0.3 ? 1.5 : noi < -0.3 ? -1.5 : 0;
+        noiZEl.textContent = noiZ.toFixed(2);
+        noiZEl.className = 'dash-value ' + (noiZ > 1 ? 'buy' : noiZ < -1 ? 'sell' : 'neutral');
+    }
+
+    // Update Vol-Z approximation
+    var volZEl = document.getElementById('dash-vol-z');
+    if (volZEl && barVol > 0) {
+        var volZ = barVol > 500 ? 2.5 : barVol > 200 ? 1.0 : barVol < 50 ? -1.0 : 0;
+        volZEl.textContent = volZ.toFixed(2);
+        volZEl.className = 'dash-value ' + (volZ > 2 ? 'buy' : volZ < -2 ? 'sell' : 'neutral');
+    }
+
+    // Signal logic: use bar_delta for direction, bar_cvd for trend strength
+    var sigEl = document.getElementById('sig-signal');
+    var confEl = document.getElementById('sig-confidence');
+    if (sigEl && confEl) {
+        var signal = 'NEUTRAL';
+        var confidence = 0;
+        var reasons = [];
+
+        if (barDelta > 20) {
+            signal = 'LONG';
+            confidence = Math.min(25 + barDelta, 90);
+            reasons.push('barΔ+' + barDelta);
+        } else if (barDelta < -20) {
+            signal = 'SHORT';
+            confidence = Math.min(25 + Math.abs(barDelta), 90);
+            reasons.push('barΔ' + barDelta);
+        }
+
+        // CVD trend confirmation
+        if (barCvd > 50 && signal !== 'SHORT') {
+            confidence = Math.min(confidence + 15, 95);
+            reasons.push('CVD+' + barCvd);
+        } else if (barCvd < -50 && signal !== 'LONG') {
+            confidence = Math.min(confidence + 15, 95);
+            reasons.push('CVD' + barCvd);
+        }
+
+        // Volume confirmation
+        if (barVol > 300) {
+            confidence = Math.min(confidence + 10, 95);
+            reasons.push('vol+' + barVol);
+        }
+
+        sigEl.textContent = signal;
+        sigEl.style.color = signal === 'LONG' ? '#00d4aa' : signal === 'SHORT' ? '#ff4757' : '#888';
+        confEl.textContent = confidence + '%';
+        confEl.style.color = confidence > 70 ? '#00d4aa' : confidence > 40 ? '#f1c40f' : '#888';
+
+        // Update large order count from bar volume (mock: large = >100)
+        var loEl = document.getElementById('dash-large-count');
+        if (loEl) {
+            var largeCount = barVol > 100 ? Math.floor(barVol / 100) : 0;
+            loEl.textContent = largeCount;
+            loEl.style.color = largeCount > 0 ? '#f1c40f' : '#888';
+        }
+    }
+}
+
+// [NEW] Update signals from kline indicators when API data arrives
+function updateSignalsFromIndicators(indicators) {
+    if (!indicators) return;
+    var sig = indicators.trading_signal || {};
+    var sigSignal = sig.signal || 'NEUTRAL';
+    var sigConfidence = sig.confidence || 0;
+    var sigEl = document.getElementById('sig-signal');
+    var confEl = document.getElementById('sig-confidence');
+    if (sigEl) {
+        sigEl.textContent = sigSignal;
+        sigEl.style.color = sigSignal === 'LONG' ? '#00d4aa' : sigSignal === 'SHORT' ? '#ff4757' : '#888';
+    }
+    if (confEl) {
+        confEl.textContent = sigConfidence + '%';
+        confEl.style.color = sigConfidence > 70 ? '#00d4aa' : sigConfidence > 40 ? '#f1c40f' : '#888';
+    }
+    var loCount = (indicators.large_orders || []).length;
+    var loEl = document.getElementById('dash-large-count');
+    if (loEl) {
+        loEl.textContent = loCount;
+        loEl.style.color = loCount > 0 ? '#f1c40f' : '#888';
+    }
+
+    // Update key levels
+    var keyLevels = indicators.key_levels || {};
+    var klPivot = document.getElementById('kl-pivot');
+    var klR1 = document.getElementById('kl-r1');
+    var klS1 = document.getElementById('kl-s1');
+    var dashPoc = document.getElementById('dash-poc');
+    var dashVahVal = document.getElementById('dash-vah-val');
+    if (klPivot) klPivot.textContent = keyLevels.pivot || '--';
+    if (klR1) klR1.textContent = keyLevels.r1 || '--';
+    if (klS1) klS1.textContent = keyLevels.s1 || '--';
+    if (dashPoc) dashPoc.textContent = (indicators.volume_profile || {}).poc || '--';
+    if (dashVahVal) dashVahVal.textContent = ((indicators.volume_profile || {}).vah || '--') + '/' + ((indicators.volume_profile || {}).val || '--');
+
+    // Update dashboard values
+    var vwapData = indicators.vwap || [];
+    var cvdData = indicators.cvd || [];
+    var noiZData = indicators.noi_zscore || [];
+    var volZData = indicators.volume_zscore || [];
+
+    var lastVwap = vwapData.length > 0 ? vwapData[vwapData.length - 1] : '--';
+    var lastCvd = cvdData.length > 0 ? cvdData[cvdData.length - 1] : '--';
+    var lastNoiZ = noiZData.length > 0 ? noiZData[noiZData.length - 1] : '--';
+    var lastVolZ = volZData.length > 0 ? volZData[volZData.length - 1] : '--';
+
+    var vwapEl = document.getElementById('dash-vwap');
+    var cvdEl = document.getElementById('dash-cvd');
+    var noiZEl = document.getElementById('dash-noi-z');
+    var volZEl = document.getElementById('dash-vol-z');
+
+    if (vwapEl) vwapEl.textContent = typeof lastVwap === 'number' ? lastVwap.toFixed(2) : lastVwap;
+    if (cvdEl) {
+        cvdEl.textContent = typeof lastCvd === 'number' ? (lastCvd >= 0 ? '+' : '') + lastCvd : lastCvd;
+        cvdEl.className = 'dash-value ' + (typeof lastCvd === 'number' ? (lastCvd >= 0 ? 'buy' : 'sell') : 'neutral');
+    }
+    if (noiZEl) {
+        noiZEl.textContent = typeof lastNoiZ === 'number' ? lastNoiZ.toFixed(2) : lastNoiZ;
+        noiZEl.className = 'dash-value ' + (typeof lastNoiZ === 'number' ? (lastNoiZ > 1 ? 'buy' : lastNoiZ < -1 ? 'sell' : 'neutral') : 'neutral');
+    }
+    if (volZEl) {
+        volZEl.textContent = typeof lastVolZ === 'number' ? lastVolZ.toFixed(2) : lastVolZ;
+        volZEl.className = 'dash-value ' + (typeof lastVolZ === 'number' ? (lastVolZ > 2 ? 'buy' : lastVolZ < -2 ? 'sell' : 'neutral') : 'neutral');
+    }
+
+    var spread = indicators.current_spread || 0;
+    var spreadSpike = indicators.spread_spike || false;
+    var spreadEl = document.getElementById('dash-spread');
+    if (spreadEl) {
+        spreadEl.textContent = spread.toFixed(4) + (spreadSpike ? ' ⚠' : '');
+        spreadEl.className = 'dash-value ' + (spreadSpike ? 'spike' : 'neutral');
+    }
+}
+
+
+// ==================== 指标悬浮提示 ====================
+var _indTooltipData = {};
+function setIndTooltipData(key, data) { _indTooltipData[key] = data; }
+
+function showIndTip(el) {
+    var tip = document.getElementById('ind-tooltip');
+    if (!tip) return;
+    var type = el.dataset.tip;
+    var html = '';
+    var d = _indTooltipData;
+    var borderColor = '#3a4050';
+
+    if (type === 'spread') {
+        borderColor = d.spread_spike ? '#ff4757' : '#3a4050';
+        html = '<div style="color:#e0e0e0; font-weight:bold; margin-bottom:4px;">📊 Spread (买卖价差)</div>';
+        html += '<div style="color:#888;">Ask - Bid，越小流动性越好</div>';
+        if (d.current_spread !== undefined) html += '<div style="margin-top:4px;">当前: <span style="color:#e0e0e0; font-family:monospace;">' + d.current_spread + '</span></div>';
+        if (d.spread_zscore !== undefined) html += '<div>Z-Score: <span style="color:' + (Math.abs(d.spread_zscore) > 2 ? '#ff4757' : '#888') + '">' + d.spread_zscore + '</span></div>';
+        if (d.spread_spike) html += '<div style="color:#ff4757; margin-top:4px;">⚠ 价差异常扩大</div>';
+    } else if (type === 'volz') {
+        borderColor = d.volz_value && Math.abs(d.volz_value) > 2 ? '#ff4757' : '#3a4050';
+        html = '<div style="color:#e0e0e0; font-weight:bold; margin-bottom:4px;">📈 Volume Z-Score (成交量异常度)</div>';
+        html += '<div style="color:#888;">(当前Vol - 均值) / 标准差</div>';
+        html += '<div style="color:#888;">> 2 = 放量 | < -2 = 缩量</div>';
+        if (d.volz_value !== undefined) html += '<div style="margin-top:4px;">当前: <span style="color:' + (Math.abs(d.volz_value) > 2 ? '#ff4757' : '#e0e0e0') + '; font-family:monospace;">' + d.volz_value + '</span></div>';
+    } else if (type === 'cvd') {
+        borderColor = d.cvd_value && d.cvd_value >= 0 ? '#00d4aa' : '#ff4757';
+        html = '<div style="color:#e0e0e0; font-weight:bold; margin-bottom:4px;">📈 CVD (累计成交量差)</div>';
+        html += '<div style="color:#888;">Σ(主动买量 - 主动卖量)</div>';
+        html += '<div style="color:#888;">上升 = 买方主导 | 下降 = 卖方主导</div>';
+        if (d.cvd_value !== undefined) html += '<div style="margin-top:4px;">当前: <span style="color:' + (d.cvd_value >= 0 ? '#00d4aa' : '#ff4757') + '; font-family:monospace;">' + (d.cvd_value >= 0 ? '+' : '') + d.cvd_value + '</span></div>';
+        if (d.cvd_slope !== undefined) html += '<div>斜率: <span style="color:' + (d.cvd_slope >= 0 ? '#00d4aa' : '#ff4757') + '">' + (d.cvd_slope >= 0 ? '+' : '') + d.cvd_slope + '</span></div>';
+    } else if (type === 'noiz') {
+        borderColor = d.noiz_value && Math.abs(d.noiz_value) > 1.5 ? '#ff4757' : '#3a4050';
+        html = '<div style="color:#e0e0e0; font-weight:bold; margin-bottom:4px;">⚖️ NOI Z-Score (净订单失衡)</div>';
+        html += '<div style="color:#888;">Delta / TotalVol，范围 -1 ~ +1</div>';
+        html += '<div style="color:#888;">|Z| > 1.5 = 极端失衡</div>';
+        if (d.noiz_value !== undefined) html += '<div style="margin-top:4px;">当前: <span style="color:' + (Math.abs(d.noiz_value) > 1.5 ? '#ff4757' : '#e0e0e0') + '; font-family:monospace;">' + d.noiz_value + '</span></div>';
+        if (d.noi_value !== undefined) html += '<div>NOI: <span style="color:' + (d.noi_value >= 0 ? '#00d4aa' : '#ff4757') + '">' + (d.noi_value >= 0 ? '+' : '') + d.noi_value + '</span></div>';
+    } else if (type === 'vwap') {
+        borderColor = '#f1c40f';
+        html = '<div style="color:#e0e0e0; font-weight:bold; margin-bottom:4px;">📍 VWAP (成交量加权均价)</div>';
+        html += '<div style="color:#888;">Price > VWAP = 强势 | Price < VWAP = 弱势</div>';
+        if (d.vwap_value !== undefined) html += '<div style="margin-top:4px;">VWAP: <span style="color:#f1c40f; font-family:monospace;">' + d.vwap_value + '</span></div>';
+        if (d.vwap_diff !== undefined) html += '<div>价差: <span style="color:' + (d.vwap_diff >= 0 ? '#00d4aa' : '#ff4757') + '">' + (d.vwap_diff >= 0 ? '+' : '') + d.vwap_diff + '%</span></div>';
+    } else if (type === 'signal') {
+        borderColor = d.sig_signal === 'LONG' ? '#00d4aa' : d.sig_signal === 'SHORT' ? '#ff4757' : '#3a4050';
+        html = '<div style="color:#e0e0e0; font-weight:bold; margin-bottom:4px;">🎯 复合交易信号</div>';
+        html += '<div style="color:#888;">综合: CVD + VolZ + NOI + VWAP + VP</div>';
+        if (d.sig_signal) html += '<div style="margin-top:4px;">信号: <span style="color:' + (d.sig_signal === 'LONG' ? '#00d4aa' : d.sig_signal === 'SHORT' ? '#ff4757' : '#888') + '; font-weight:bold;">' + d.sig_signal + '</span></div>';
+        if (d.sig_confidence !== undefined) html += '<div>置信度: <span style="color:' + (d.sig_confidence > 70 ? '#00d4aa' : d.sig_confidence > 40 ? '#f1c40f' : '#888') + '">' + d.sig_confidence + '%</span></div>';
+        if (d.large_orders !== undefined) html += '<div style="margin-top:4px; color:#666; font-size:10px;">大单: ' + d.large_orders + '笔</div>';
+    } else if (type === 'levels') {
+        borderColor = '#f1c40f';
+        html = '<div style="color:#e0e0e0; font-weight:bold; margin-bottom:4px;">🎯 关键价位 & 成交量分布</div>';
+        if (d.kl_pivot) html += '<div style="display:flex; justify-content:space-between;"><span style="color:#f1c40f">Pivot:</span><span style="font-family:monospace">' + d.kl_pivot + '</span></div>';
+        if (d.kl_r1) html += '<div style="display:flex; justify-content:space-between;"><span style="color:#ff6b6b">R1:</span><span style="font-family:monospace">' + d.kl_r1 + '</span></div>';
+        if (d.kl_r2) html += '<div style="display:flex; justify-content:space-between;"><span style="color:#ff6b6b">R2:</span><span style="font-family:monospace">' + d.kl_r2 + '</span></div>';
+        if (d.kl_s1) html += '<div style="display:flex; justify-content:space-between;"><span style="color:#00d4aa">S1:</span><span style="font-family:monospace">' + d.kl_s1 + '</span></div>';
+        if (d.kl_s2) html += '<div style="display:flex; justify-content:space-between;"><span style="color:#00d4aa">S2:</span><span style="font-family:monospace">' + d.kl_s2 + '</span></div>';
+        html += '<div style="border-top:1px solid #2a3040; margin-top:6px; padding-top:4px;">';
+        if (d.vp_poc) html += '<div style="display:flex; justify-content:space-between;"><span style="color:#666">POC:</span><span style="font-family:monospace">' + d.vp_poc + '</span></div>';
+        if (d.vp_vah) html += '<div style="display:flex; justify-content:space-between;"><span style="color:#666">VAH:</span><span style="font-family:monospace">' + d.vp_vah + '</span></div>';
+        if (d.vp_val) html += '<div style="display:flex; justify-content:space-between;"><span style="color:#666">VAL:</span><span style="font-family:monospace">' + d.vp_val + '</span></div>';
+        html += '</div>';
+    }
+
+    tip.style.borderColor = borderColor;
+    tip.innerHTML = html;
+    tip.style.display = 'block';
+}
+
+function hideIndTip() {
+    var tip = document.getElementById('ind-tooltip');
+    if (tip) tip.style.display = 'none';
+}
+
 function updateIndicatorDashboard(indicators) {
     if (!indicators) return;
 
@@ -855,35 +1635,24 @@ function updateIndicatorDashboard(indicators) {
     document.getElementById('kl-pivot').textContent = keyLevels.pivot || '--';
     document.getElementById('kl-r1').textContent = keyLevels.r1 || '--';
     document.getElementById('kl-s1').textContent = keyLevels.s1 || '--';
-    document.getElementById('kl-r2').textContent = keyLevels.r2 || '--';
-    document.getElementById('kl-s2').textContent = keyLevels.s2 || '--';
-    document.getElementById('kl-r3').textContent = keyLevels.r3 || '--';
-    document.getElementById('kl-s3').textContent = keyLevels.s3 || '--';
 
     var vwapData = indicators.vwap || [];
     var cvdData = indicators.cvd || [];
-    var cvdSlopeData = indicators.cvd_slope || [];
     var noiZData = indicators.noi_zscore || [];
     var volZData = indicators.volume_zscore || [];
 
     var lastVwap = vwapData.length > 0 ? vwapData[vwapData.length - 1] : '--';
     var lastCvd = cvdData.length > 0 ? cvdData[cvdData.length - 1] : '--';
-    var lastCvdSlope = cvdSlopeData.length > 0 ? cvdSlopeData[cvdSlopeData.length - 1] : '--';
     var lastNoiZ = noiZData.length > 0 ? noiZData[noiZData.length - 1] : '--';
     var lastVolZ = volZData.length > 0 ? volZData[volZData.length - 1] : '--';
     var currentSpread = indicators.current_spread || 0;
     var spreadSpike = indicators.spread_spike || false;
 
-    var vwapEl = document.getElementById('dash-vwap');
-    vwapEl.textContent = typeof lastVwap === 'number' ? lastVwap.toFixed(2) : lastVwap;
+    document.getElementById('dash-vwap').textContent = typeof lastVwap === 'number' ? lastVwap.toFixed(2) : lastVwap;
 
     var cvdEl = document.getElementById('dash-cvd');
     cvdEl.textContent = typeof lastCvd === 'number' ? (lastCvd >= 0 ? '+' : '') + lastCvd : lastCvd;
     cvdEl.className = 'dash-value ' + (typeof lastCvd === 'number' ? (lastCvd >= 0 ? 'buy' : 'sell') : 'neutral');
-
-    var cvdSlopeEl = document.getElementById('dash-cvd-slope');
-    cvdSlopeEl.textContent = typeof lastCvdSlope === 'number' ? (lastCvdSlope >= 0 ? '▲ ' : '▼ ') + Math.abs(lastCvdSlope).toFixed(1) : lastCvdSlope;
-    cvdSlopeEl.className = 'dash-value ' + (typeof lastCvdSlope === 'number' ? (lastCvdSlope >= 0 ? 'buy' : 'sell') : 'neutral');
 
     var noiZEl = document.getElementById('dash-noi-z');
     noiZEl.textContent = typeof lastNoiZ === 'number' ? lastNoiZ.toFixed(2) : lastNoiZ;
@@ -901,345 +1670,75 @@ function updateIndicatorDashboard(indicators) {
     } else {
         spreadEl.className = 'dash-value neutral';
     }
-}
 
-function updateChart(windowIdx, inst, period, data) {
-    var chart = charts[windowIdx];
-    if (!chart) return;
+    // Volume Profile
+    var vp = indicators.volume_profile || {};
+    document.getElementById('dash-poc').textContent = vp.poc || '--';
+    document.getElementById('dash-vah-val').textContent = (vp.vah || '--') + '/' + (vp.val || '--');
 
-    var klines = data.klines || [];
-    var macd = data.macd || { dif: [], dea: [], macd: [] };
-    var indicators = data.indicators || {};
+    // 交易信号
+    var sig = indicators.trading_signal || {};
+    var sigSignal = sig.signal || 'NEUTRAL';
+    var sigConfidence = sig.confidence || 0;
+    var sigEl = document.getElementById('sig-signal');
+    sigEl.textContent = sigSignal;
+    sigEl.style.color = sigSignal === 'LONG' ? '#00d4aa' : sigSignal === 'SHORT' ? '#ff4757' : '#888';
+    var confEl = document.getElementById('sig-confidence');
+    confEl.textContent = sigConfidence + '%';
+    confEl.style.color = sigConfidence > 70 ? '#00d4aa' : sigConfidence > 40 ? '#f1c40f' : '#888';
 
-    if (klines.length === 0) {
-        debugLog(inst + " " + period + " 无K线数据", "warn");
-        return;
-    }
+    // 大单数
+    var loCount = (indicators.large_orders || []).length;
+    document.getElementById('dash-large-count').textContent = loCount;
+    document.getElementById('dash-large-count').style.color = loCount > 0 ? '#f1c40f' : '#888';
 
-    var dates = klines.map(function(k) { return k.time; });
-    var candleData = klines.map(function(k) { return [k.open, k.close, k.low, k.high]; });
-
-    var buyVolumes = klines.map(function(k) {
-        return { value: k.buy_vol || 0, itemStyle: { color: '#00d4aa' } };
+    // [NEW] 更新悬浮提示数据缓存
+    var spreadZ = indicators.spread_zscore;
+    var cvdSlope = indicators.cvd_slope;
+    var noi = indicators.noi;
+    var vwapDiff = indicators.vwap_diff;
+    setIndTooltipData('spread', {
+        current_spread: typeof currentSpread === 'number' ? currentSpread.toFixed(4) : currentSpread,
+        spread_zscore: typeof spreadZ === 'number' ? spreadZ.toFixed(2) : (Array.isArray(spreadZ) && spreadZ.length > 0 ? spreadZ[spreadZ.length-1].toFixed(2) : '--'),
+        spread_spike: spreadSpike
     });
-    var sellVolumes = klines.map(function(k) {
-        return { value: k.sell_vol || 0, itemStyle: { color: '#ff4757' } };
+    setIndTooltipData('volz', {
+        volz_value: typeof lastVolZ === 'number' ? lastVolZ.toFixed(2) : '--'
     });
-
-    // [NEW] 提取指标数据
-    var vwapData = indicators.vwap || [];
-    var cvdData = indicators.cvd || [];
-    var cvdSlopeData = indicators.cvd_slope || [];
-    var noiData = indicators.noi || [];
-    var noiZData = indicators.noi_zscore || [];
-    var volZData = indicators.volume_zscore || [];
-    var keyLevels = indicators.key_levels || {};
-    var spreadData = [];
-
-    // 为每根K线生成一个spread值（使用tick数据近似）
-    for (var i = 0; i < klines.length; i++) {
-        var bar = klines[i];
-        var spread = 0;
-        if (bar.ask && bar.bid) {
-            spread = bar.ask - bar.bid;
-        } else if (bar.high && bar.low) {
-            spread = (bar.high - bar.low) * 0.02;
-        }
-        spreadData.push({
-            value: spread,
-            itemStyle: { color: spread > (indicators.current_spread || 0) * 2 ? '#ff4757' : '#666' }
-        });
-    }
-
-    // [NEW] 构建markLine数据（关键价位）
-    var markLines = [];
-    if (keyLevels.pivot) {
-        markLines.push({ yAxis: keyLevels.pivot, name: 'Pivot', lineStyle: { color: '#f1c40f', type: 'dashed', width: 1 } });
-    }
-    if (keyLevels.r1) markLines.push({ yAxis: keyLevels.r1, name: 'R1', lineStyle: { color: '#ff6b6b', type: 'dotted', width: 1 } });
-    if (keyLevels.r2) markLines.push({ yAxis: keyLevels.r2, name: 'R2', lineStyle: { color: '#ff6b6b', type: 'dotted', width: 1 } });
-    if (keyLevels.s1) markLines.push({ yAxis: keyLevels.s1, name: 'S1', lineStyle: { color: '#00d4aa', type: 'dotted', width: 1 } });
-    if (keyLevels.s2) markLines.push({ yAxis: keyLevels.s2, name: 'S2', lineStyle: { color: '#00d4aa', type: 'dotted', width: 1 } });
-
-    var option = {
-        backgroundColor: 'transparent',
-        animation: false,
-        grid: getChartGrids(windowIdx),
-        xAxis: [
-            { type: 'category', data: dates, gridIndex: 0, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { color: '#666', fontSize: 9 } },
-            { type: 'category', data: dates, gridIndex: 1, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { show: false } },
-            { type: 'category', data: dates, gridIndex: 2, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { show: false } },
-            { type: 'category', data: dates, gridIndex: 3, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { show: false } },
-            { type: 'category', data: dates, gridIndex: 4, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { show: false } },
-            { type: 'category', data: dates, gridIndex: 5, axisLine: { lineStyle: { color: '#333' } }, axisLabel: { color: '#666', fontSize: 9 } }
-        ],
-        yAxis: [
-            { scale: true, gridIndex: 0, splitLine: { lineStyle: { color: '#1a1f2e' } }, axisLabel: { color: '#888', fontSize: 9 } },
-            { scale: true, gridIndex: 1, splitLine: { show: false }, axisLabel: { show: false } },
-            { scale: true, gridIndex: 2, splitLine: { lineStyle: { color: '#1a1f2e' } }, axisLabel: { color: '#888', fontSize: 9 } },
-            { scale: true, gridIndex: 3, splitLine: { lineStyle: { color: '#1a1f2e' } }, axisLabel: { color: '#888', fontSize: 9 } },
-            { scale: true, gridIndex: 4, splitLine: { lineStyle: { color: '#1a1f2e' } }, axisLabel: { color: '#888', fontSize: 9 } },
-            { scale: true, gridIndex: 5, splitLine: { lineStyle: { color: '#1a1f2e' } }, axisLabel: { color: '#888', fontSize: 9 } }
-        ],
-        dataZoom: [{ type: 'inside', xAxisIndex: [0,1,2,3,4,5], start: 50, end: 100 }],
-        series: [
-            // Panel 0: K线 + VWAP + Key Levels
-            {
-                name: 'K线', type: 'candlestick',
-                xAxisIndex: 0, yAxisIndex: 0, data: candleData,
-                itemStyle: {
-                    color: '#00d4aa', color0: '#ff4757',
-                    borderColor: '#00d4aa', borderColor0: '#ff4757'
-                },
-                markLine: {
-                    symbol: 'none',
-                    label: { show: true, fontSize: 9, color: '#888', position: 'insideEndTop' },
-                    data: markLines,
-                    animation: false
-                }
-            },
-            {
-                name: 'VWAP', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
-                data: vwapData.map(function(v) { return v === null || v === undefined ? null : v; }),
-                smooth: true, showSymbol: false,
-                lineStyle: { color: '#9b59b6', width: 1.5, type: 'dashed' },
-                connectNulls: false
-            },
-            // Panel 1: Volume + Volume Z-Score
-            {
-                name: '主动买', type: 'bar', stack: 'volume',
-                xAxisIndex: 1, yAxisIndex: 1, data: buyVolumes, barWidth: '60%'
-            },
-            {
-                name: '主动卖', type: 'bar', stack: 'volume',
-                xAxisIndex: 1, yAxisIndex: 1, data: sellVolumes, barWidth: '60%'
-            },
-            {
-                name: 'Vol Z-Score', type: 'line', xAxisIndex: 1, yAxisIndex: 1,
-                data: volZData.map(function(v) { return v === null || v === undefined ? null : v; }),
-                smooth: true, showSymbol: false,
-                lineStyle: { color: '#f39c12', width: 1 },
-                connectNulls: false
-            },
-            // Panel 2: CVD + CVD Slope
-            {
-                name: 'CVD', type: 'line', xAxisIndex: 2, yAxisIndex: 2,
-                data: cvdData.map(function(v) { return v === null || v === undefined ? null : v; }),
-                smooth: true, showSymbol: false,
-                lineStyle: { color: '#3498db', width: 1.5 },
-                areaStyle: { color: 'rgba(52,152,219,0.1)' },
-                connectNulls: false
-            },
-            {
-                name: 'CVD Slope', type: 'line', xAxisIndex: 2, yAxisIndex: 2,
-                data: cvdSlopeData.map(function(v) { return v === null || v === undefined ? null : v; }),
-                smooth: true, showSymbol: false,
-                lineStyle: { color: '#e74c3c', width: 1 },
-                connectNulls: false
-            },
-            // Panel 3: NOI + NOI Z-Score
-            {
-                name: 'NOI', type: 'line', xAxisIndex: 3, yAxisIndex: 3,
-                data: noiData.map(function(v) { return v === null || v === undefined ? null : v; }),
-                smooth: true, showSymbol: false,
-                lineStyle: { color: '#1abc9c', width: 1.5 },
-                connectNulls: false
-            },
-            {
-                name: 'NOI Z-Score', type: 'line', xAxisIndex: 3, yAxisIndex: 3,
-                data: noiZData.map(function(v) { return v === null || v === undefined ? null : v; }),
-                smooth: true, showSymbol: false,
-                lineStyle: { color: '#e67e22', width: 1 },
-                markLine: {
-                    symbol: 'none',
-                    silent: true,
-                    data: [
-                        { yAxis: 2, lineStyle: { color: '#00d4aa', type: 'dashed', width: 0.5 } },
-                        { yAxis: -2, lineStyle: { color: '#ff4757', type: 'dashed', width: 0.5 } },
-                        { yAxis: 0, lineStyle: { color: '#666', type: 'solid', width: 0.5 } }
-                    ]
-                },
-                connectNulls: false
-            },
-            // Panel 4: MACD
-            {
-                name: 'DIF', type: 'line', xAxisIndex: 4, yAxisIndex: 4,
-                data: (macd.dif || []).map(function(v) { return v === null || v === undefined ? null : v; }),
-                smooth: true, showSymbol: false,
-                lineStyle: { color: '#f1c40f', width: 1 },
-                connectNulls: false
-            },
-            {
-                name: 'DEA', type: 'line', xAxisIndex: 4, yAxisIndex: 4,
-                data: (macd.dea || []).map(function(v) { return v === null || v === undefined ? null : v; }),
-                smooth: true, showSymbol: false,
-                lineStyle: { color: '#3498db', width: 1 },
-                connectNulls: false
-            },
-            {
-                name: 'MACD', type: 'bar', xAxisIndex: 4, yAxisIndex: 4,
-                data: (macd.macd || []).map(function(v) {
-                    if (v === null || v === undefined) return null;
-                    return { value: v, itemStyle: { color: v >= 0 ? '#00d4aa' : '#ff4757' } };
-                }),
-                barWidth: '40%'
-            },
-            // Panel 5: Spread
-            {
-                name: 'Spread', type: 'bar', xAxisIndex: 5, yAxisIndex: 5,
-                data: spreadData,
-                barWidth: '40%'
-            }
-        ],
-        tooltip: {
-            trigger: 'axis',
-            backgroundColor: 'rgba(10,14,26,0.95)',
-            borderColor: '#2a3040',
-            textStyle: { color: '#e0e0e0', fontSize: 11 },
-            formatter: function(params) {
-                if (!params || params.length === 0) return '';
-                var idx = params[0].dataIndex;
-                var timeLabel = params[0].name || '';
-                var kline = chart.__klines ? chart.__klines[idx] : null;
-
-                // Build value map from all series at this index
-                var vals = {};
-                for (var p = 0; p < params.length; p++) {
-                    var param = params[p];
-                    if (param && param.seriesName && param.value !== undefined && param.value !== null) {
-                        var v = param.value;
-                        if (typeof v === 'object' && v !== null && v.value !== undefined) {
-                            v = v.value;
-                        }
-                        vals[param.seriesName] = v;
-                    }
-                }
-
-                var html = '<div style="font-weight:bold;margin-bottom:6px;font-size:12px;color:#00d4aa;">' + timeLabel + '</div>';
-
-                // Panel 0: K线 + VWAP
-                var candle = null;
-                for (var p = 0; p < params.length; p++) {
-                    if (params[p] && params[p].seriesType === 'candlestick') {
-                        candle = params[p];
-                        break;
-                    }
-                }
-                if (candle && candle.data) {
-                    var d = candle.data;
-                    var ocColor = d[2] >= d[1] ? '#00ff88' : '#ff6b6b';
-                    html += '<div style="margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #333;">' +
-                        '<div style="color:#888;font-size:10px;margin-bottom:3px;">▬ K线</div>' +
-                        '<span style="color:' + ocColor + '">开 ' + d[1] + ' 收 ' + d[2] + '</span><br/>' +
-                        '低 ' + d[3] + ' 高 ' + d[4];
-                    if (kline) {
-                        html += '<br/><span style="color:#00ff88">买 ' + (kline.buy_vol || 0) + '</span> ' +
-                                '<span style="color:#ff6b6b">卖 ' + (kline.sell_vol || 0) + '</span> ' +
-                                'Δ <span style="color:' + ((kline.delta || 0) >= 0 ? '#00ff88' : '#ff6b6b') + '">' + 
-                                ((kline.delta || 0) >= 0 ? '+' : '') + (kline.delta || 0) + '</span>';
-                    }
-                    if (vals['VWAP'] !== undefined) {
-                        html += '<br/>VWAP <span style="color:#9b59b6">' + vals['VWAP'] + '</span>';
-                    }
-                    html += '</div>';
-                }
-
-                // Panel 1: Volume + Vol Z-Score
-                if (vals['主动买'] !== undefined || vals['主动卖'] !== undefined || vals['Vol Z-Score'] !== undefined) {
-                    html += '<div style="margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #333;">' +
-                        '<div style="color:#888;font-size:10px;margin-bottom:3px;">▬ 成交量</div>' +
-                        '<span style="color:#00d4aa">买量 ' + (vals['主动买'] !== undefined ? vals['主动买'] : '--') + '</span> ' +
-                        '<span style="color:#ff4757">卖量 ' + (vals['主动卖'] !== undefined ? vals['主动卖'] : '--') + '</span>';
-                    if (vals['Vol Z-Score'] !== undefined) {
-                        var vzColor = vals['Vol Z-Score'] > 2 ? '#00ff88' : vals['Vol Z-Score'] < -2 ? '#ff6b6b' : '#888';
-                        html += '<br/>Vol Z-Score <span style="color:' + vzColor + '">' + vals['Vol Z-Score'] + '</span>';
-                    }
-                    html += '</div>';
-                }
-
-                // Panel 2: CVD + CVD Slope
-                if (vals['CVD'] !== undefined || vals['CVD Slope'] !== undefined) {
-                    html += '<div style="margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #333;">' +
-                        '<div style="color:#888;font-size:10px;margin-bottom:3px;">▬ CVD</div>' +
-                        'CVD <span style="color:#3498db">' + (vals['CVD'] !== undefined ? ((vals['CVD'] >= 0 ? '+' : '') + vals['CVD']) : '--') + '</span>';
-                    if (vals['CVD Slope'] !== undefined) {
-                        var slopeColor = vals['CVD Slope'] >= 0 ? '#00ff88' : '#ff6b6b';
-                        html += '<br/>Slope <span style="color:' + slopeColor + '">' + (vals['CVD Slope'] >= 0 ? '▲ ' : '▼ ') + Math.abs(vals['CVD Slope']).toFixed(1) + '</span>';
-                    }
-                    html += '</div>';
-                }
-
-                // Panel 3: NOI + NOI Z-Score
-                if (vals['NOI'] !== undefined || vals['NOI Z-Score'] !== undefined) {
-                    html += '<div style="margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #333;">' +
-                        '<div style="color:#888;font-size:10px;margin-bottom:3px;">▬ NOI</div>' +
-                        'NOI <span style="color:#1abc9c">' + (vals['NOI'] !== undefined ? vals['NOI'].toFixed(4) : '--') + '</span>';
-                    if (vals['NOI Z-Score'] !== undefined) {
-                        var nzColor = vals['NOI Z-Score'] > 1 ? '#00ff88' : vals['NOI Z-Score'] < -1 ? '#ff6b6b' : '#888';
-                        html += '<br/>Z-Score <span style="color:' + nzColor + '">' + vals['NOI Z-Score'] + '</span>';
-                    }
-                    html += '</div>';
-                }
-
-                // Panel 4: MACD
-                if (vals['DIF'] !== undefined || vals['DEA'] !== undefined || vals['MACD'] !== undefined) {
-                    html += '<div style="margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #333;">' +
-                        '<div style="color:#888;font-size:10px;margin-bottom:3px;">▬ MACD</div>' +
-                        'DIF <span style="color:#f1c40f">' + (vals['DIF'] !== undefined ? vals['DIF'] : '--') + '</span> ' +
-                        'DEA <span style="color:#3498db">' + (vals['DEA'] !== undefined ? vals['DEA'] : '--') + '</span><br/>' +
-                        'MACD <span style="color:' + ((vals['MACD'] !== undefined && vals['MACD'] >= 0) ? '#00ff88' : '#ff6b6b') + '">' + 
-                        (vals['MACD'] !== undefined ? ((vals['MACD'] >= 0 ? '+' : '') + vals['MACD']) : '--') + '</span>' +
-                        '</div>';
-                }
-
-                // Panel 5: Spread
-                if (vals['Spread'] !== undefined) {
-                    html += '<div style="margin-bottom:6px;">' +
-                        '<div style="color:#888;font-size:10px;margin-bottom:3px;">▬ Spread</div>' +
-                        'Spread <span style="color:#e67e22">' + vals['Spread'] + '</span>' +
-                        '</div>';
-                }
-
-                return html;
-            }
-        }
-    };
-
-    chart.__klines = klines.slice();
-    chart.setOption(option, true);
-}
-
-
-// [NEW] 6-panel grid layout
-function getChartGrids(windowIdx) {
-    var key = windowIdx + '_' + (windowPeriods[windowIdx] || '1m');
-    var ratios = gridRatios[key] || DEFAULT_GRID_RATIOS.slice();
-    var total = ratios.reduce(function(a, b) { return a + b; }, 0);
-    var normalized = ratios.map(function(r) { return r / total; });
-
-    var top = 6;
-    var available = 88;
-    var grids = [];
-    for (var i = 0; i < 6; i++) {
-        var height = normalized[i] * available;
-        grids.push({
-            left: '10%',
-            right: '6%',
-            top: top + '%',
-            height: height + '%'
-        });
-        top += height;
-    }
-    return grids;
-}
-
-function changePeriod(windowIdx, period) {
-    windowPeriods[windowIdx] = period;
-    var win = document.getElementById('window-' + windowIdx);
-    win.querySelectorAll('.period-btn').forEach(function(btn) {
-        btn.classList.toggle('active', btn.dataset.period === period);
+    setIndTooltipData('cvd', {
+        cvd_value: typeof lastCvd === 'number' ? lastCvd : '--',
+        cvd_slope: Array.isArray(cvdSlope) && cvdSlope.length > 0 ? cvdSlope[cvdSlope.length-1].toFixed(1) : '--'
     });
-    fetchKlineData(windowInstruments[windowIdx], period, windowIdx);
+    setIndTooltipData('noiz', {
+        noiz_value: typeof lastNoiZ === 'number' ? lastNoiZ.toFixed(2) : '--',
+        noi_value: Array.isArray(noi) && noi.length > 0 ? noi[noi.length-1].toFixed(4) : '--'
+    });
+    setIndTooltipData('vwap', {
+        vwap_value: typeof lastVwap === 'number' ? lastVwap.toFixed(2) : '--',
+        vwap_diff: vwapDiff || '--'
+    });
+    setIndTooltipData('signal', {
+        sig_signal: sigSignal,
+        sig_confidence: sigConfidence,
+        large_orders: loCount
+    });
+    setIndTooltipData('levels', {
+        kl_pivot: keyLevels.pivot || '--',
+        kl_r1: keyLevels.r1 || '--',
+        kl_r2: keyLevels.r2 || '--',
+        kl_s1: keyLevels.s1 || '--',
+        kl_s2: keyLevels.s2 || '--',
+        vp_poc: vp.poc || '--',
+        vp_vah: vp.vah || '--',
+        vp_val: vp.val || '--'
+    });
+    // 同时更新迷你信号显示
+    var sigMini = document.getElementById('dash-signal-mini');
+    if (sigMini) {
+        sigMini.textContent = sigSignal + ' ' + sigConfidence + '%';
+        sigMini.style.color = sigSignal === 'LONG' ? '#00d4aa' : sigSignal === 'SHORT' ? '#ff4757' : '#888';
+        sigMini.className = 'dash-value ' + (sigSignal === 'LONG' ? 'buy' : sigSignal === 'SHORT' ? 'sell' : 'neutral');
+    }
 }
 
 function selectWindow(idx) {
@@ -1307,56 +1806,48 @@ function updateOrderflow(items) {
 
     if (list.children.length === 1 && list.children[0].textContent.indexOf('暂无') >= 0) {
         list.innerHTML = '';
+        resetStatsBuffer();  // Reset stats when clearing
     }
 
-    var buyTotal = 0, sellTotal = 0, deltaTotal = 0;
-    for (var i = 0; i < children.length; i++) {
-        var buyV = parseInt(children[i].querySelector('.buy-v').textContent) || 0;
-        var sellV = parseInt(children[i].querySelector('.sell-v').textContent) || 0;
-        var deltaV = parseInt(children[i].querySelector('.delta').textContent) || 0;
-        buyTotal += buyV;
-        sellTotal += sellV;
-        deltaTotal += deltaV;
-    }
-
-    var currentLastTime = ofLastItemTime;
     var fragment = document.createDocumentFragment();
     newItems.forEach(function(item) {
-        var cls = item.aggressor === 'BUY' ? 'buy' : item.aggressor === 'SELL' ? 'sell' : 'mix';
-        var dirText = item.aggressor === 'BUY' ? '买' : item.aggressor === 'SELL' ? '卖' : '混';
-        buyTotal += item.buy_vol || 0;
-        sellTotal += item.sell_vol || 0;
-        deltaTotal += item.delta || 0;
+        var totalV = (item.buy_vol || 0) + (item.sell_vol || 0);
+        var buyV = item.buy_vol || 0;
+        var sellV = item.sell_vol || 0;
+        var deltaV = item.delta || 0;
+        var buyPct = totalV > 0 ? (buyV / totalV * 100).toFixed(0) : 50;
+        var sellPct = totalV > 0 ? (sellV / totalV * 100).toFixed(0) : 50;
+        var cls = deltaV > 0 ? 'buy' : deltaV < 0 ? 'sell' : 'mix';
         var price = (item.price || 0).toFixed(2);
-        var deltaStr = (item.delta || 0) >= 0 ? '+' + (item.delta || 0) : '' + (item.delta || 0);
-        var deltaColor = (item.delta || 0) >= 0 ? '#00d4aa' : '#ff4757';
+        var deltaStr = deltaV >= 0 ? '+' + deltaV : '' + deltaV;
+        var deltaColor = deltaV >= 0 ? '#00d4aa' : '#ff4757';
         var itemTime = (item.time || '') + (item.millisec ? '.' + item.millisec : '');
-        var isNew = itemTime > currentLastTime;
+        var isNew = itemTime > ofLastItemTime;
         var flashClass = isNew ? ' flash-new' : '';
         var div = document.createElement('div');
         div.className = 'orderflow-item ' + cls + flashClass;
         div.innerHTML =
             '<span class="time">' + (item.time || '--') + '</span>' +
             '<span class="price">' + price + '</span>' +
-            '<span class="vol">' + (item.total_vol || 0) + '</span>' +
-            '<span class="buy-v">' + (item.buy_vol || 0) + '</span>' +
-            '<span class="sell-v">' + (item.sell_vol || 0) + '</span>' +
-            '<span class="delta" style="color:' + deltaColor + '">' + deltaStr + '</span>' +
-            '<span class="dir">' + dirText + '</span>';
+            '<span class="vol-bar-wrap">' +
+                '<span class="vol-bar">' +
+                    '<span class="vol-buy" style="width:' + buyPct + '%"></span>' +
+                    '<span class="vol-sell" style="width:' + sellPct + '%"></span>' +
+                    '<span class="vol-text">' + totalV + '</span>' +
+                '</span>' +
+            '</span>' +
+            '<span class="delta" style="color:' + deltaColor + '">' + deltaStr + '</span>';
         fragment.appendChild(div);
+
+        // [NEW] Add to rolling stats buffer
+        addToStatsBuffer(buyV, sellV, deltaV, item.time || null);
     });
 
     list.appendChild(fragment);
 
-    var maxDisplay = 500;
+    var maxDisplay = Math.max(STATS_WINDOW_SIZE * 2, 500);
     while (list.children.length > maxDisplay) {
         var firstChild = list.children[0];
-        var buyV = parseInt(firstChild.querySelector('.buy-v').textContent) || 0;
-        var sellV = parseInt(firstChild.querySelector('.sell-v').textContent) || 0;
-        var deltaV = parseInt(firstChild.querySelector('.delta').textContent) || 0;
-        buyTotal -= buyV;
-        sellTotal -= sellV;
-        deltaTotal -= deltaV;
         list.removeChild(firstChild);
     }
 
@@ -1369,25 +1860,7 @@ function updateOrderflow(items) {
         ofLastItemTime = (lastItem.time || '') + (lastItem.millisec ? '.' + lastItem.millisec : '');
     }
 
-    document.getElementById('stat-buy').textContent = buyTotal;
-    document.getElementById('stat-sell').textContent = sellTotal;
-    var deltaEl = document.getElementById('stat-delta');
-    deltaEl.textContent = (deltaTotal >= 0 ? '+' : '') + deltaTotal;
-    deltaEl.style.color = deltaTotal >= 0 ? '#00d4aa' : '#ff4757';
-
-    var ofStatLabel = document.getElementById('of-stat-label');
-    var ofTimeRange = document.getElementById('of-time-range');
-    if (ofStatLabel) {
-        var visibleCount = list.querySelectorAll('.orderflow-item').length;
-        ofStatLabel.textContent = '显示: ' + visibleCount + '条 (最多' + maxDisplay + '条)';
-    }
-    if (ofTimeRange && list.children.length > 0) {
-        var firstTimeEl = list.children[0].querySelector('.time');
-        var lastTimeEl = list.children[list.children.length - 1].querySelector('.time');
-        var firstTime = firstTimeEl ? firstTimeEl.textContent : '--';
-        var lastTime = lastTimeEl ? lastTimeEl.textContent : '--';
-        ofTimeRange.textContent = firstTime + ' ~ ' + lastTime;
-    }
+    // Stats display is updated via addToStatsBuffer -> updateStatsDisplay
 }
 
 // [NEW] 实时更新K线图表（包含新指标）
@@ -1422,42 +1895,162 @@ function updateKlineRealtime(klineUpdate) {
         var macdData = option.series[11] ? option.series[11].data || [] : [];
         var spreadData = option.series[12] ? option.series[12].data || [] : [];
 
-        if (!chart.__klines) chart.__klines = [];
+        // [FIX] Ensure chart.__klines exists and is properly initialized
+        if (!chart.__klines) {
+            chart.__klines = [];
+            // Initialize from existing option data if possible
+            if (candleData.length > 0) {
+                for (var k = 0; k < candleData.length; k++) {
+                    var cData = candleData[k];
+                    if (Array.isArray(cData) && cData.length >= 4) {
+                        chart.__klines.push({
+                            time: dates[k] || '--',
+                            open: cData[0],
+                            close: cData[1],
+                            low: cData[2],
+                            high: cData[3],
+                            volume: 0,
+                            buy_vol: 0,
+                            sell_vol: 0,
+                            delta: 0,
+                            vwap: vwapData[k] || 0,
+                            cvd: cvdData[k] || 0,
+                            noi: noiData[k] || 0
+                        });
+                    }
+                }
+            }
+        }
         var klinesCache = chart.__klines;
         var liveMacd = bar.live_macd || null;
 
+        // [FIX] Update right panel signals for selected window from kline data
+        if (i === selectedWindow) {
+            var indKey = i + '_' + period;
+            var ind = windowIndicators[indKey];
+            if (ind && bar) {
+                // Update dashboard from current bar values + cached indicators
+                var vwapData2 = ind.vwap || [];
+                var cvdData2 = ind.cvd || [];
+                var noiZData2 = ind.noi_zscore || [];
+                var volZData2 = ind.volume_zscore || [];
+
+                // Build realtime indicators using bar data
+                var realtimeInd = {
+                    vwap: bar.vwap !== undefined ? vwapData2.slice(-99).concat([bar.vwap]) : vwapData2,
+                    cvd: bar.cvd !== undefined ? cvdData2.slice(-99).concat([bar.cvd]) : cvdData2,
+                    noi_zscore: bar.noi !== undefined && bar.volume > 0 ? noiZData2.slice(-99).concat([Math.round((bar.noi * 3) * 100) / 100]) : noiZData2,
+                    volume_zscore: bar.volume !== undefined ? volZData2.slice(-99).concat([bar.volume > 500 ? 2.5 : bar.volume > 200 ? 1.0 : bar.volume < 50 ? -1.0 : 0]) : volZData2,
+                    key_levels: ind.key_levels || {},
+                    volume_profile: ind.volume_profile || {},
+                    current_spread: bar.spread !== undefined ? bar.spread : (ind.current_spread || 0),
+                    spread_spike: ind.spread_spike || false,
+                    trading_signal: ind.trading_signal || {signal: 'NEUTRAL', confidence: 0},
+                    large_orders: ind.large_orders || []
+                };
+                updateSignalsFromIndicators(realtimeInd);
+
+                // Also update VWAP and CVD display
+                var vwapEl = document.getElementById('dash-vwap');
+                var cvdEl = document.getElementById('dash-cvd');
+                if (vwapEl && bar.vwap !== undefined) vwapEl.textContent = bar.vwap.toFixed(2);
+                if (cvdEl && bar.cvd !== undefined) {
+                    cvdEl.textContent = (bar.cvd >= 0 ? '+' : '') + bar.cvd;
+                    cvdEl.className = 'dash-value ' + (bar.cvd >= 0 ? 'buy' : 'sell');
+                }
+            }
+        }
+
+        // [FIX] Handle existing bar update (same timestamp)
         if (lastDate === bar.time) {
             var lastIdx = candleData.length - 1;
-            candleData[lastIdx] = [bar.open, bar.close, bar.low, bar.high];
-            buyVolData[lastIdx] = { value: bar.buy_vol || 0, itemStyle: { color: '#00d4aa' } };
-            sellVolData[lastIdx] = { value: bar.sell_vol || 0, itemStyle: { color: '#ff4757' } };
+            if (lastIdx < 0) {
+                // No data yet, treat as new bar
+                lastDate = null;
+            } else {
+                candleData[lastIdx] = [bar.open, bar.close, bar.low, bar.high];
+                buyVolData[lastIdx] = { value: bar.buy_vol || 0, itemStyle: { color: '#00d4aa' } };
+                sellVolData[lastIdx] = { value: bar.sell_vol || 0, itemStyle: { color: '#ff4757' } };
 
-            if (klinesCache[lastIdx]) {
-                klinesCache[lastIdx] = {
-                    time: bar.time, open: bar.open, close: bar.close, low: bar.low, high: bar.high,
-                    volume: bar.volume, buy_vol: bar.buy_vol || 0, sell_vol: bar.sell_vol || 0,
-                    delta: bar.delta || 0, vwap: bar.vwap || 0, cvd: bar.cvd || 0, noi: bar.noi || 0
-                };
-            }
+                // Update panels 3,4,5 (grids 2,3,4) for existing bar
+                if (vwapData.length > lastIdx && bar.vwap !== undefined && bar.vwap !== null) {
+                    vwapData[lastIdx] = bar.vwap;
+                }
+                if (cvdData.length > lastIdx && bar.cvd !== undefined && bar.cvd !== null) {
+                    cvdData[lastIdx] = bar.cvd;
+                }
+                if (noiData.length > lastIdx && bar.noi !== undefined && bar.noi !== null) {
+                    noiData[lastIdx] = bar.noi;
+                }
+                // Spread from bar's ask/bid
+                var barSpread = 0;
+                if (bar.ask && bar.bid) {
+                    barSpread = Math.round((bar.ask - bar.bid) * 10000) / 10000;
+                } else if (bar.spread) {
+                    barSpread = bar.spread;
+                }
+                if (spreadData.length > lastIdx) {
+                    var lastSpread = spreadData.length > 1 ? spreadData[spreadData.length - 2] : 0;
+                    if (typeof lastSpread === 'object' && lastSpread !== null && lastSpread.value !== undefined) {
+                        lastSpread = lastSpread.value;
+                    }
+                    spreadData[lastIdx] = {
+                        value: barSpread || lastSpread || 0,
+                        itemStyle: { color: barSpread > (lastSpread || 0) * 2 ? '#ff4757' : '#666' }
+                    };
+                }
 
-            if (liveMacd && difData.length > 0) {
-                var macdLastIdx = difData.length - 1;
-                difData[macdLastIdx] = liveMacd.dif;
-                deaData[macdLastIdx] = liveMacd.dea;
-                macdData[macdLastIdx] = {
-                    value: liveMacd.macd,
-                    itemStyle: { color: liveMacd.macd >= 0 ? '#00d4aa' : '#ff4757' }
-                };
+                // [FIX] Update panels 3,4,5 (grids 2,3,4) for existing bar [FIX] Update klinesCache for tooltip
+                if (klinesCache.length > lastIdx) {
+                    klinesCache[lastIdx] = {
+                        time: bar.time,
+                        open: bar.open,
+                        close: bar.close,
+                        low: bar.low,
+                        high: bar.high,
+                        volume: bar.volume || 0,
+                        buy_vol: bar.buy_vol || 0,
+                        sell_vol: bar.sell_vol || 0,
+                        delta: bar.delta || 0,
+                        vwap: bar.vwap || 0,
+                        cvd: bar.cvd || 0,
+                        noi: bar.noi || 0
+                    };
+                }
+
+                if (liveMacd && difData.length > 0) {
+                    var macdLastIdx = difData.length - 1;
+                    difData[macdLastIdx] = liveMacd.dif;
+                    deaData[macdLastIdx] = liveMacd.dea;
+                    macdData[macdLastIdx] = {
+                        value: liveMacd.macd,
+                        itemStyle: { color: liveMacd.macd >= 0 ? '#00d4aa' : '#ff4757' }
+                    };
+                }
             }
-        } else {
+        }
+
+        // [FIX] Handle new bar (different timestamp)
+        if (lastDate !== bar.time) {
             dates.push(bar.time);
             candleData.push([bar.open, bar.close, bar.low, bar.high]);
             buyVolData.push({ value: bar.buy_vol || 0, itemStyle: { color: '#00d4aa' } });
             sellVolData.push({ value: bar.sell_vol || 0, itemStyle: { color: '#ff4757' } });
+            
+            // [FIX] Push to klinesCache for tooltip
             klinesCache.push({
-                time: bar.time, open: bar.open, close: bar.close, low: bar.low, high: bar.high,
-                volume: bar.volume, buy_vol: bar.buy_vol || 0, sell_vol: bar.sell_vol || 0,
-                delta: bar.delta || 0, vwap: bar.vwap || 0, cvd: bar.cvd || 0, noi: bar.noi || 0
+                time: bar.time,
+                open: bar.open,
+                close: bar.close,
+                low: bar.low,
+                high: bar.high,
+                volume: bar.volume || 0,
+                buy_vol: bar.buy_vol || 0,
+                sell_vol: bar.sell_vol || 0,
+                delta: bar.delta || 0,
+                vwap: bar.vwap || 0,
+                cvd: bar.cvd || 0,
+                noi: bar.noi || 0
             });
 
             // Push VWAP
@@ -1520,6 +2113,7 @@ function updateKlineRealtime(klineUpdate) {
                 }
             }
 
+            // Limit data points to prevent memory issues
             if (dates.length > 200) {
                 dates.shift();
                 candleData.shift();
@@ -1539,6 +2133,7 @@ function updateKlineRealtime(klineUpdate) {
             }
         }
 
+        // [FIX] Update chart with all data including updated tooltip cache
         chart.__klines = klinesCache;
         chart.setOption({
             xAxis: [
@@ -1562,10 +2157,16 @@ function updateKlineRealtime(klineUpdate) {
                 { data: spreadData }
             ]
         });
+
+        // [FIX] Update the chart's __klines reference to match the tooltip data
+        // This ensures the tooltip formatter uses the updated data
+        var currentOption = chart.getOption();
+        if (currentOption && currentOption.series && currentOption.series.length > 0) {
+            // Store the klines in the chart instance for the tooltip formatter
+            chart.__klines = klinesCache;
+        }
     }
 }
-
-
 function switchSource() {
     var newSource = currentSource === 'mock' ? 'ctp' : 'mock';
     debugLog('切换数据源: ' + newSource, 'info');
@@ -1692,6 +2293,8 @@ function connectWS() {
                     if (data.instruments) {
                         for (var inst in data.instruments) {
                             var info = data.instruments[inst];
+                            // [NEW] Real-time signal update from tick data
+                            updateSignalsRealtime(inst, info);
                             for (var i = 0; i < windowMode; i++) {
                                 if (windowInstruments[i] === inst) {
                                     var priceEl = document.getElementById('price-' + i);
@@ -1743,11 +2346,12 @@ function connectWS() {
                             console.error('[UI] updateKlineRealtime 错误:', e);
                         }
                     }
+                    // Signal refresh is now handled inside updateKlineRealtime
                     if (data.orderflow_stats) {
                         var ofStatLabel = document.getElementById('of-stat-label');
                         var ofTimeRange = document.getElementById('of-time-range');
                         if (ofStatLabel) {
-                            ofStatLabel.textContent = '显示: ' + data.orderflow_stats.count + '条 (最多' + data.orderflow_stats.max_display + '条)';
+                            ofStatLabel.textContent = '显示: ' + data.orderflow_stats.count + '条 (窗口' + STATS_WINDOW_SIZE + 'ticks)';
                         }
                         if (ofTimeRange && data.orderflow_stats.time_range) {
                             ofTimeRange.textContent = data.orderflow_stats.time_range;
@@ -1851,6 +2455,7 @@ function toggleConnection() {
 // ==================== 页面加载 ====================
 document.addEventListener('DOMContentLoaded', function() {
     debugLog('页面加载，品种库: ' + ALL_INSTRUMENTS.length + '个', 'info');
+    document.getElementById('stats-window-size').textContent = STATS_WINDOW_SIZE;
 
     var btnConnect = document.getElementById('btnConnect');
     if (btnConnect) btnConnect.addEventListener('click', toggleConnection);

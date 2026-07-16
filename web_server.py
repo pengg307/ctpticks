@@ -152,17 +152,36 @@ async def lifespan(app: FastAPI):
         engine.start()
         dsm.current = "mock"
 
-    asyncio.create_task(data_pusher())
-    yield
-    # Shutdown
-    print("\n" + "=" * 60)
-    print("服务关闭中...")
-    engine.stop()
-    ctp_engine.stop()
-    store.db_manager.force_flush()
-    store.close()
-    print("数据已保存，服务已关闭")
-    print("=" * 60)
+    push_task = asyncio.create_task(data_pusher())
+    try:
+        yield
+    except asyncio.CancelledError:
+        pass  # 正常关闭，不需要报错
+    finally:
+        # Shutdown
+        print("\n" + "=" * 60)
+        print("服务关闭中...")
+
+        # 取消 data_pusher 任务
+        if push_task and not push_task.done():
+            push_task.cancel()
+            try:
+                await push_task
+            except asyncio.CancelledError:
+                pass
+
+        engine.stop()
+        ctp_engine.stop()
+        # [FIX] 等待 CTP 回调线程完全停止，避免 CHECKPOINT 时还有活跃事务
+        import time
+        time.sleep(0.5)
+        try:
+            store.db_manager.force_flush()
+            store.close()
+        except Exception as e:
+            print(f"[Shutdown] 数据保存错误: {e}")
+        print("数据已保存，服务已关闭")
+        print("=" * 60)
 
 
 
@@ -360,6 +379,283 @@ class TechnicalIndicators:
 
 
 # ============ 订单流计算器 ============
+
+    @staticmethod
+    def calc_volume_profile(bars, price_buckets=20):
+        """计算成交量分布 (Volume Profile)
+        返回: POC, VAH, VAL, HVN列表, LVN列表
+        POC: Point of Control - 成交量最大的价格
+        VAH/VAL: Value Area High/Low - 成交量占70%的价格区间
+        HVN: High Volume Node - 高成交量节点
+        LVN: Low Volume Node - 低成交量节点
+        """
+        if not bars or len(bars) < 5:
+            return {"poc": 0, "vah": 0, "val": 0, "hvn": [], "lvn": []}
+
+        # 收集所有价格点和成交量
+        price_vol = defaultdict(float)
+        for bar in bars:
+            # 将每根K线的高低价区间分成若干点，按成交量均匀分配
+            high, low = bar["high"], bar["low"]
+            vol = bar.get("volume", 0)
+            if high > low and vol > 0:
+                # 简化: 将成交量集中在收盘价附近
+                close_p = bar["close"]
+                # 在[low, high]区间内按价格加权分配成交量
+                range_p = high - low
+                if range_p > 0:
+                    # 用三角形分布: 收盘价处权重最高
+                    for i in range(price_buckets):
+                        p = low + (high - low) * i / (price_buckets - 1)
+                        weight = 1 - abs(p - close_p) / range_p if range_p > 0 else 1
+                        weight = max(weight, 0.1)
+                        price_vol[round(p, 2)] += vol * weight / price_buckets
+
+        if not price_vol:
+            return {"poc": 0, "vah": 0, "val": 0, "hvn": [], "lvn": []}
+
+        # 按成交量排序
+        sorted_prices = sorted(price_vol.items(), key=lambda x: x[1], reverse=True)
+        total_vol = sum(price_vol.values())
+
+        # POC: 成交量最大的价格
+        poc = sorted_prices[0][0] if sorted_prices else 0
+
+        # VAH/VAL: 从POC向两边扩展，直到覆盖70%成交量
+        target_vol = total_vol * 0.7
+        accumulated = 0
+        included_prices = set()
+        for price, vol in sorted_prices:
+            accumulated += vol
+            included_prices.add(price)
+            if accumulated >= target_vol:
+                break
+
+        vah = max(included_prices) if included_prices else 0
+        val = min(included_prices) if included_prices else 0
+
+        # HVN: 成交量高于均值+1σ的价格节点
+        mean_vol = total_vol / len(price_vol)
+        variance = sum((v - mean_vol) ** 2 for v in price_vol.values()) / len(price_vol)
+        std_vol = math.sqrt(variance) if variance > 0 else 1
+        hvn_threshold = mean_vol + std_vol
+
+        hvn = [p for p, v in price_vol.items() if v > hvn_threshold]
+        lvn = [p for p, v in price_vol.items() if v < mean_vol - 0.5 * std_vol]
+
+        return {
+            "poc": round(poc, 2),
+            "vah": round(vah, 2),
+            "val": round(val, 2),
+            "hvn": sorted(hvn),
+            "lvn": sorted(lvn),
+            "profile": dict(price_vol)
+        }
+
+    @staticmethod
+    def calc_order_flow_rate(bars, window=5):
+        """计算订单流速率 (Order Flow Rate)
+        单位时间内主动买/卖量的变化率
+        """
+        if not bars or len(bars) < window + 1:
+            return []
+        rates = [0] * window
+        for i in range(window, len(bars)):
+            # 计算窗口内delta的变化率
+            curr_delta = bars[i].get("delta", 0)
+            prev_delta = bars[i - window].get("delta", 0)
+            curr_vol = bars[i].get("volume", 0)
+            prev_vol = bars[i - window].get("volume", 0)
+
+            # 订单流速率 = (当前delta - N期前delta) / 平均成交量
+            avg_vol = max((curr_vol + prev_vol) / 2, 1)
+            rate = (curr_delta - prev_delta) / avg_vol
+            rates.append(round(rate, 4))
+        return rates
+
+    @staticmethod
+    def detect_large_orders(ticks, window=50, threshold_sigma=2.0):
+        """检测大单: tick volume > mean + threshold_sigma * std
+        返回大单列表和统计信息
+        """
+        if not ticks or len(ticks) < window:
+            return [], {"mean": 0, "std": 0, "threshold": 0}
+
+        volumes = [t.get("total_vol", 0) for t in ticks[-window:]]
+        mean_vol = sum(volumes) / len(volumes)
+        variance = sum((v - mean_vol) ** 2 for v in volumes) / len(volumes)
+        std_vol = math.sqrt(variance) if variance > 0 else 1
+        threshold = mean_vol + threshold_sigma * std_vol
+
+        large_orders = []
+        for tick in ticks:
+            vol = tick.get("total_vol", 0)
+            if vol > threshold and vol > 0:
+                large_orders.append({
+                    "time": tick.get("time", ""),
+                    "price": tick.get("price", 0),
+                    "volume": vol,
+                    "buy_vol": tick.get("buy_vol", 0),
+                    "sell_vol": tick.get("sell_vol", 0),
+                    "delta": tick.get("delta", 0),
+                    "aggressor": tick.get("aggressor", ""),
+                    "zscore": round((vol - mean_vol) / std_vol, 2) if std_vol > 0 else 0
+                })
+
+        return large_orders, {"mean": round(mean_vol, 2), "std": round(std_vol, 2), "threshold": round(threshold, 2)}
+
+    @staticmethod
+    def calc_signal_confidence(indicators, current_bar, last_ticks):
+        """计算高置信度交易信号
+        返回: signal, confidence_score, reasons
+        signal: 'LONG', 'SHORT', 'NEUTRAL'
+        confidence: 0-100
+        """
+        score = 0
+        reasons = []
+        max_score = 0
+
+        # 1. CVD方向 (权重20)
+        max_score += 20
+        cvd = indicators.get("cvd", [])
+        cvd_slope = indicators.get("cvd_slope", [])
+        if len(cvd) >= 2 and len(cvd_slope) >= 1:
+            if cvd[-1] > cvd[-2] and cvd_slope[-1] > 0:
+                score += 20
+                reasons.append("CVD上升+斜率正")
+            elif cvd[-1] < cvd[-2] and cvd_slope[-1] < 0:
+                score -= 20
+                reasons.append("CVD下降+斜率负")
+
+        # 2. Volume Z-Score (权重20)
+        max_score += 20
+        vol_z = indicators.get("volume_zscore", [])
+        if vol_z:
+            last_vz = vol_z[-1]
+            if last_vz > 2:
+                score += 20
+                reasons.append(f"放量异常(VolZ={last_vz})")
+            elif last_vz < -2:
+                score -= 10
+                reasons.append(f"缩量(VolZ={last_vz})")
+
+        # 3. NOI Z-Score (权重20)
+        max_score += 20
+        noi_z = indicators.get("noi_zscore", [])
+        if noi_z:
+            last_nz = noi_z[-1]
+            if last_nz > 1.5:
+                score += 20
+                reasons.append(f"买方主导(NOI_Z={last_nz})")
+            elif last_nz < -1.5:
+                score -= 20
+                reasons.append(f"卖方主导(NOI_Z={last_nz})")
+
+        # 4. 价格与VWAP关系 (权重15)
+        max_score += 15
+        vwap = indicators.get("vwap", [])
+        if vwap and current_bar:
+            last_vwap = vwap[-1]
+            close = current_bar.get("close", 0)
+            if close > last_vwap * 1.001:
+                score += 15
+                reasons.append("价格>VWAP")
+            elif close < last_vwap * 0.999:
+                score -= 15
+                reasons.append("价格<VWAP")
+
+        # 5. Spread状态 (权重10)
+        max_score += 10
+        spread = current_bar.get("spread", 0) if current_bar else 0
+        if last_ticks:
+            tick_spread = last_ticks.get("spread", 0)
+            if tick_spread < 0.02:  # 正常点差
+                score += 5
+                reasons.append("点差正常")
+            elif tick_spread > 0.05:  # 点差过大
+                score -= 10
+                reasons.append("点差过大(流动性差)")
+
+        # 6. Volume Profile位置 (权重15)
+        max_score += 15
+        vp = indicators.get("volume_profile", {})
+        if vp and current_bar:
+            poc = vp.get("poc", 0)
+            vah = vp.get("vah", 0)
+            val = vp.get("val", 0)
+            close = current_bar.get("close", 0)
+            if close > vah:
+                score += 15
+                reasons.append("价格突破VAH")
+            elif close < val:
+                score -= 15
+                reasons.append("价格跌破VAL")
+            elif poc * 0.995 < close < poc * 1.005:
+                score += 5
+                reasons.append("价格在POC附近")
+
+        # 计算置信度
+        confidence = abs(score) / max_score * 100 if max_score > 0 else 0
+
+        if score >= 50:
+            signal = "LONG"
+        elif score <= -50:
+            signal = "SHORT"
+        else:
+            signal = "NEUTRAL"
+
+        return {
+            "signal": signal,
+            "score": score,
+            "confidence": round(confidence, 1),
+            "max_score": max_score,
+            "reasons": reasons
+        }
+
+    @staticmethod
+    def calc_exit_signal(position, indicators, current_bar, entry_price, stop_loss_pct=0.01, take_profit_pct=0.02):
+        """计算出场信号
+        position: 'LONG' or 'SHORT'
+        返回: action, reason
+        """
+        if not current_bar or not entry_price:
+            return "HOLD", "无数据"
+
+        current_price = current_bar.get("close", 0)
+        if current_price <= 0 or entry_price <= 0:
+            return "HOLD", "价格无效"
+
+        pnl_pct = (current_price - entry_price) / entry_price
+        if position == "SHORT":
+            pnl_pct = -pnl_pct
+
+        # 止损
+        if pnl_pct < -stop_loss_pct:
+            return "EXIT", f"止损触发({pnl_pct*100:.2f}%)"
+
+        # 止盈
+        if pnl_pct > take_profit_pct:
+            return "EXIT", f"止盈触发({pnl_pct*100:.2f}%)"
+
+        # CVD反转出场
+        cvd = indicators.get("cvd", [])
+        cvd_slope = indicators.get("cvd_slope", [])
+        if len(cvd) >= 3 and len(cvd_slope) >= 2:
+            if position == "LONG" and cvd[-1] < cvd[-2] and cvd_slope[-1] < 0 and cvd_slope[-2] > 0:
+                return "EXIT", "CVD动量反转(多转空)"
+            if position == "SHORT" and cvd[-1] > cvd[-2] and cvd_slope[-1] > 0 and cvd_slope[-2] < 0:
+                return "EXIT", "CVD动量反转(空转多)"
+
+        # NOI极端反转
+        noi_z = indicators.get("noi_zscore", [])
+        if noi_z:
+            last_nz = noi_z[-1]
+            if position == "LONG" and last_nz < -2:
+                return "EXIT", f"NOI极端负值({last_nz})"
+            if position == "SHORT" and last_nz > 2:
+                return "EXIT", f"NOI极端正值({last_nz})"
+
+        return "HOLD", "持仓中"
 class OrderFlowCalculator:
     def __init__(self):
         self.last_volume = 0
@@ -483,14 +779,16 @@ class DuckDBManager:
 
     def save_tick(self, inst, tick):
         try:
+            ts = self._parse_time(tick.get("time", ""))
+            self.conn.execute("BEGIN TRANSACTION")
             self.conn.execute("""
                 INSERT INTO ticks 
                 (id, timestamp, date_str, instrument, price, volume, buy_vol, sell_vol, delta, 
                  bid, ask, bid_vol, ask_vol, aggressor, total_volume, spread)
                 VALUES (nextval('seq_tick_id'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, [
-                self._parse_time(tick.get("time", "")),
-                datetime.now().strftime("%Y%m%d"),
+                ts,
+                ts.strftime("%Y%m%d"),
                 tick.get("instrument", inst),
                 tick.get("price", 0),
                 tick.get("total_vol", 0),
@@ -505,19 +803,28 @@ class DuckDBManager:
                 tick.get("volume_total", 0),
                 tick.get("spread", 0)
             ])
+            self.conn.execute("COMMIT")
+            return True
         except Exception as e:
+            try:
+                self.conn.execute("ROLLBACK")
+            except:
+                pass
             print(f"[DuckDB] Tick 写入错误: {e}")
+            return False
 
     def save_kline(self, inst, period, bar):
         try:
+            ts = self._parse_time(bar.get("time", ""))
+            self.conn.execute("BEGIN TRANSACTION")
             self.conn.execute("""
                 INSERT INTO klines 
                 (id, timestamp, date_str, instrument, period, open, high, low, close,
                  volume, buy_vol, sell_vol, delta, tick_count, vwap, cvd, noi)
                 VALUES (nextval('seq_kline_id'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, [
-                self._parse_time(bar.get("time", "")),
-                datetime.now().strftime("%Y%m%d"),
+                ts,
+                ts.strftime("%Y%m%d"),
                 inst,
                 period,
                 bar.get("open", 0),
@@ -533,8 +840,15 @@ class DuckDBManager:
                 bar.get("cvd", 0),
                 bar.get("noi", 0)
             ])
+            self.conn.execute("COMMIT")
+            return True
         except Exception as e:
+            try:
+                self.conn.execute("ROLLBACK")
+            except:
+                pass
             print(f"[DuckDB] K线写入错误: {e}")
+            return False
 
     def load_klines(self, inst, period, limit=200):
         try:
@@ -600,7 +914,7 @@ class DuckDBManager:
 
     def force_flush(self):
         try:
-            self.conn.execute("CHECKPOINT")
+            self.conn.execute("FORCE CHECKPOINT")
             print("[DuckDB] 强制刷盘完成")
         except Exception as e:
             print(f"[DuckDB] 刷盘错误: {e}")
@@ -638,24 +952,29 @@ class DuckDBManager:
 
     def close(self):
         try:
-            self.conn.execute("CHECKPOINT")
+            self.conn.execute("FORCE CHECKPOINT")
             self.conn.close()
-            print("[DuckDB] 连接已关闭")
+            print("[DuckDB] 连接已关闭，数据已持久化")
         except Exception as e:
             print(f"[DuckDB] 关闭错误: {e}")
 
     def _parse_time(self, time_str):
         try:
+            today = datetime.now()
             if len(time_str) == 5:
-                today = datetime.now().strftime("%Y-%m-%d")
-                return f"{today} {time_str}:00"
+                return today.replace(
+                    hour=int(time_str[:2]), minute=int(time_str[3:5]),
+                    second=0, microsecond=0
+                )
             elif len(time_str) == 8:
-                today = datetime.now().strftime("%Y-%m-%d")
-                return f"{today} {time_str}"
+                return today.replace(
+                    hour=int(time_str[:2]), minute=int(time_str[3:5]),
+                    second=int(time_str[6:8]), microsecond=0
+                )
             else:
-                return datetime.now()
-        except:
-            return datetime.now()
+                return today.replace(second=0, microsecond=0)
+        except Exception:
+            return datetime.now().replace(second=0, microsecond=0)
 
 
 # ============ 交易时间工具 ============
@@ -776,6 +1095,11 @@ class DataStore:
         self.key_levels = {}
         self.spread_history = {}
         self.intraday_seasonality = {}
+        # [NEW] 新增指标缓存
+        self.volume_profile = {}
+        self.order_flow_rate = {}
+        self.large_orders = {}
+        self.trading_signals = {}
 
         self.window_mode = WINDOW_CONFIG["DEFAULT_MODE"]
         self.window_instruments = list(INSTRUMENTS)[:self.window_mode]
@@ -805,6 +1129,10 @@ class DataStore:
             self.key_levels[inst] = {}
             self.spread_history[inst] = deque(maxlen=100)
             self.intraday_seasonality[inst] = {}
+            self.volume_profile[inst] = {}
+            self.order_flow_rate[inst] = {}
+            self.large_orders[inst] = []
+            self.trading_signals[inst] = {}
             self._access_time[inst] = time.time()
 
     def touch(self, inst):
@@ -840,6 +1168,11 @@ class DataStore:
                 self.key_levels[inst] = {}
                 self.spread_history[inst] = deque(maxlen=100)
                 self.intraday_seasonality[inst] = {}
+                # [NEW] 新增指标缓存
+                self.volume_profile[inst] = {}
+                self.order_flow_rate[inst] = {}
+                self.large_orders[inst] = []
+                self.trading_signals[inst] = {}
             self._access_time[inst] = time.time()
             self._access_time.move_to_end(inst)
             return {"success": True, "message": f"窗口 {window_idx} -> {inst}", "evicted": evicted}
@@ -860,6 +1193,10 @@ class DataStore:
         self.key_levels.pop(inst, None)
         self.spread_history.pop(inst, None)
         self.intraday_seasonality.pop(inst, None)
+        self.volume_profile.pop(inst, None)
+        self.order_flow_rate.pop(inst, None)
+        self.large_orders.pop(inst, None)
+        self.trading_signals.pop(inst, None)
         self._access_time.pop(inst, None)
         print(f"[LRU] 淘汰: {inst}，活跃: {len(self.active_instruments)}")
 
@@ -942,15 +1279,15 @@ class DataStore:
                 bars.append(bar)
                 price = close_p
                 # [FIX] Mock模式不写入数据库，只在内存中生成历史数据
-                if self.data_source == "ctp":
-                    self.db_manager.save_kline(inst, "1m", bar)
             with self._lock:
                 self.klines[inst]["1m"] = bars
         else:
             print(f"  [{inst}] CTP模式，等待实时推送...")
         for period_name in ["5m", "15m", "1h"]:
             self._aggregate_from_1m(inst, period_name)
+        # [FIX] Also calculate indicators for 1m (not covered by _aggregate_from_1m)
         self._calc_all_indicators(inst, "1m")
+        self._calc_macd(inst, "1m")
         hist_ticks = self.db_manager.load_ticks(inst, limit=100)
         if hist_ticks:
             with self._lock:
@@ -999,6 +1336,9 @@ class DataStore:
             aggregated.append(current)
         with self._lock:
             self.klines[inst][period_name] = aggregated[-100:]
+        # [FIX] Calculate indicators for aggregated periods too
+        self._calc_all_indicators(inst, period_name)
+        self._calc_macd(inst, period_name)
 
     def _calc_all_indicators(self, inst, period):
         with self._lock:
@@ -1013,6 +1353,10 @@ class DataStore:
         vol_zscores = self.indicators.calc_volume_zscore(bars)
         key_levels = self.indicators.calc_key_levels(bars)
         seasonality = self.indicators.calc_intraday_seasonality(bars)
+        # [NEW] Volume Profile
+        volume_profile = self.indicators.calc_volume_profile(bars)
+        # [NEW] Order Flow Rate
+        order_flow_rate = self.indicators.calc_order_flow_rate(bars)
         with self._lock:
             self.vwap[inst][period] = vwap_values
             self.cvd[inst][period] = cvd_values
@@ -1022,6 +1366,9 @@ class DataStore:
             self.volume_zscore[inst][period] = vol_zscores
             self.key_levels[inst] = key_levels
             self.intraday_seasonality[inst] = seasonality
+            # [NEW]
+            self.volume_profile[inst] = volume_profile
+            self.order_flow_rate[inst][period] = order_flow_rate
             for i, bar in enumerate(bars):
                 if i < len(vwap_values):
                     bar["vwap"] = vwap_values[i]
@@ -1029,7 +1376,6 @@ class DataStore:
                     bar["cvd"] = cvd_values[i]
                 if i < len(noi_values):
                     bar["noi"] = noi_values[i]
-
     def _calc_macd(self, inst, period):
         with self._lock:
             bars = list(self.klines[inst][period])
@@ -1105,10 +1451,15 @@ class DataStore:
             self.tick_count += 1
             self._access_time[inst] = time.time()
             self._access_time.move_to_end(inst)
-            if self.data_source == "ctp" and is_trading:
-                self.db_manager.save_tick(inst, flow)
-                if self.tick_count % 1000 == 0:
+            if self.data_source == "ctp":
+                saved = self.db_manager.save_tick(inst, flow)
+                if saved and self.tick_count % 1000 == 0:
                     print(f"[DuckDB] 已保存 {self.tick_count} 笔Tick，最新: {inst} @ {tick_time}")
+                    # [FIX] 定期执行 CHECKPOINT，避免 WAL 过大
+                    try:
+                        self.db_manager.conn.execute("CHECKPOINT")
+                    except:
+                        pass
             if self.data_source == "mock" or is_trading:
                 for period_name, seconds in PERIODS.items():
                     self._update_kline(inst, period_name, seconds, flow)
@@ -1146,12 +1497,20 @@ class DataStore:
                             self._aggregate_from_1m(inst, p)
                         self._calc_all_indicators(inst, "1m")
                         self._calc_macd(inst, "1m")
+                # Carry forward cumulative CVD from previous bar (for ALL periods)
+                last_cvd = 0
+                if current and current.get("cvd") is not None:
+                    last_cvd = current["cvd"]
+                else:
+                    closed_bars = self.klines.get(inst, {}).get(period_name, [])
+                    if closed_bars and len(closed_bars) > 0:
+                        last_cvd = closed_bars[-1].get("cvd", 0)
                 self.current_bar[inst][period_name] = {
                     "time": bar_key, "timestamp": int(bar_start.timestamp() * 1000),
                     "open": flow["price"], "high": flow["price"], "low": flow["price"],
                     "close": flow["price"], "volume": flow["total_vol"],
                     "buy_vol": flow["buy_vol"], "sell_vol": flow["sell_vol"], "delta": flow["delta"],
-                    "vwap": flow["price"], "cvd": flow["delta"],
+                    "vwap": flow["price"], "cvd": last_cvd + flow["delta"],
                     "noi": flow["delta"] / flow["total_vol"] if flow["total_vol"] > 0 else 0,
                 }
             else:
@@ -1164,7 +1523,8 @@ class DataStore:
                 bar["sell_vol"] += flow["sell_vol"]
                 bar["delta"] += flow["delta"]
                 # Update CVD and NOI as the bar accumulates ticks
-                bar["cvd"] = bar["delta"]
+                # CVD is cumulative: add new tick delta to existing cumulative CVD
+                bar["cvd"] = bar.get("cvd", 0) + flow["delta"]
                 if bar["volume"] > 0:
                     bar["noi"] = round(bar["delta"] / bar["volume"], 4)
                     tp = (bar["high"] + bar["low"] + bar["close"]) / 3
@@ -1216,6 +1576,36 @@ class DataStore:
             key_lvls = dict(self.key_levels[inst]) if inst in self.key_levels else {}
             spread_hist = list(self.spread_history[inst]) if inst in self.spread_history else []
             seasonality = dict(self.intraday_seasonality[inst]) if inst in self.intraday_seasonality else {}
+            # [NEW]
+            vp_data = dict(self.volume_profile[inst]) if inst in self.volume_profile else {}
+            ofr_data = list(self.order_flow_rate[inst][period]) if inst in self.order_flow_rate and period in self.order_flow_rate[inst] else []
+            ticks = list(self.orderflow.get(inst, deque())) if inst in self.orderflow else []
+
+        # 大单检测
+        large_orders, large_order_stats = self.indicators.detect_large_orders(ticks)
+
+        # 高置信度信号计算
+        all_indicators = {
+            "vwap": vwap_data,
+            "cvd": cvd_data,
+            "cvd_slope": cvd_slope_data,
+            "noi": noi_data,
+            "noi_zscore": noi_z_data,
+            "volume_zscore": vol_z_data,
+            "key_levels": key_lvls,
+            "volume_profile": vp_data,
+            "order_flow_rate": ofr_data,
+        }
+
+        signal_result = self.indicators.calc_signal_confidence(
+            all_indicators, current, self.last_ticks.get(inst)
+        )
+
+        # 更新交易信号缓存
+        with self._lock:
+            self.trading_signals[inst] = signal_result
+            self.large_orders[inst] = large_orders[-20:] if large_orders else []
+
         if current and bars:
             vwap_data = vwap_data[-99:] + [current.get("vwap", current["close"])]
             cvd_data = cvd_data[-99:] + [current.get("cvd", 0)]
@@ -1223,6 +1613,8 @@ class DataStore:
             noi_data = noi_data[-99:] + [current.get("noi", 0)]
             noi_z_data = noi_z_data[-99:] + [noi_z_data[-1] if noi_z_data else 0]
             vol_z_data = vol_z_data[-99:] + [vol_z_data[-1] if vol_z_data else 0]
+            ofr_data = ofr_data[-99:] + [ofr_data[-1] if ofr_data else 0]
+
         current_spread = 0
         spread_spike = False
         spread_zscore = 0
@@ -1231,6 +1623,7 @@ class DataStore:
             is_spike, zscore = self.indicators.detect_spread_spike(list(spread_hist)[:-1], current_spread)
             spread_spike = is_spike
             spread_zscore = zscore
+
         return {
             "vwap": vwap_data[-100:] if vwap_data else [],
             "cvd": cvd_data[-100:] if cvd_data else [],
@@ -1243,8 +1636,13 @@ class DataStore:
             "spread_spike": spread_spike,
             "spread_zscore": spread_zscore,
             "seasonality": seasonality,
+            # [NEW]
+            "volume_profile": vp_data,
+            "order_flow_rate": ofr_data[-100:] if ofr_data else [],
+            "large_orders": large_orders[-10:] if large_orders else [],
+            "large_order_stats": large_order_stats,
+            "trading_signal": signal_result,
         }
-
     def get_window_config(self):
         with self._lock:
             return {
@@ -1271,39 +1669,70 @@ class MockEngine:
         self.prices = {inst: BASE_PRICES.get(inst, 3000.0) for inst in store.active_instruments}
         self.volumes = {inst: 0 for inst in store.active_instruments}
         self.running = False
+        # [NEW] Price momentum state per instrument
+        self.momentum = {inst: 0.0 for inst in store.active_instruments}
+        self.last_prices = {inst: BASE_PRICES.get(inst, 3000.0) for inst in store.active_instruments}
+        self.trend_direction = {inst: random.choice([-1, 1]) for inst in store.active_instruments}
+        self.trend_duration = {inst: random.randint(20, 100) for inst in store.active_instruments}
+        self.tick_counter = {inst: 0 for inst in store.active_instruments}
 
     def generate_tick(self, inst):
-        # Priority: last DB price (any source) > last mock price > fixed base price
-        db_price = store.last_ctp_prices.get(inst)
-        last_mock_price = self.prices.get(inst)
-        if db_price and db_price > 0:
-            base = db_price
-        elif last_mock_price and last_mock_price > 0:
-            base = last_mock_price
-        else:
-            base = BASE_PRICES.get(inst, 3000.0)
-        change = random.gauss(0, base * 0.0005)
-        price = round(base + change, 2)
-        price = max(base * 0.99, min(base * 1.01, price))
+        # Use the LAST MOCK PRICE as base, not the original base price
+        last_price = self.last_prices.get(inst, BASE_PRICES.get(inst, 3000.0))
+        base = last_price  # THIS IS THE KEY FIX: use current price, not fixed base
+
+        self.tick_counter[inst] += 1
+        tc = self.tick_counter[inst]
+
+        # Trend regime: periodically switch direction
+        if tc >= self.trend_duration.get(inst, 50):
+            self.trend_direction[inst] = random.choice([-1, 1])
+            self.trend_duration[inst] = random.randint(30, 150)
+            self.tick_counter[inst] = 0
+            # Occasionally inject a spike
+            if random.random() < 0.15:
+                self.momentum[inst] += self.trend_direction[inst] * base * random.uniform(0.003, 0.012)
+
+        # Mean-reverting momentum with trend bias
+        trend_force = self.trend_direction[inst] * base * 0.0003
+        mean_revert = -self.momentum[inst] * 0.08
+        noise = random.gauss(0, base * 0.0015)  # wider noise for visible movement
+
+        # Random spike injection (~5% chance per tick)
+        spike = 0
+        if random.random() < 0.05:
+            spike = random.choice([-1, 1]) * base * random.uniform(0.005, 0.02)
+
+        self.momentum[inst] = self.momentum[inst] * 0.92 + trend_force + mean_revert + noise + spike
+
+        price = round(base + self.momentum[inst], 2)
+
+        # Allow wider range before clamping (2% instead of 1%)
+        original_base = BASE_PRICES.get(inst, 3000.0)
+        price = max(original_base * 0.85, min(original_base * 1.25, price))
+
         self.prices[inst] = price
-        spread = max(base * 0.0002, 0.01)
+        self.last_prices[inst] = price
+        spread = max(abs(price) * 0.0002, 0.01)
         bid = round(price - spread, 2)
         ask = round(price + spread, 2)
-        vol = random.randint(1, 30) if random.random() > 0.2 else 0
+        vol = random.randint(5, 80) if random.random() > 0.15 else 0
         self.volumes[inst] += vol
         r = random.random()
-        if r < 0.3 and vol > 0:
+        if r < 0.25 and vol > 0:
             price = ask
             buy_vol = vol
             sell_vol = 0
             aggressor = "BUY"
-        elif r < 0.6 and vol > 0:
+        elif r < 0.50 and vol > 0:
             price = bid
             buy_vol = 0
             sell_vol = vol
             aggressor = "SELL"
         else:
-            buy_vol = int(vol * random.uniform(0.3, 0.7))
+            # Directional bias to create trending CVD
+            bias = random.choice([0.35, 0.65])
+            buy_vol = int(vol * bias)
             sell_vol = vol - buy_vol
             aggressor = "MIX" if vol > 0 else "MIX"
         return {
@@ -1333,8 +1762,16 @@ class MockEngine:
                     if inst not in self.prices:
                         # Use last DB price if available, else fixed base price
                         db_price = store.last_ctp_prices.get(inst)
-                        self.prices[inst] = db_price if db_price and db_price > 0 else BASE_PRICES.get(inst, 3000.0)
+                        init_price = db_price if db_price and db_price > 0 else BASE_PRICES.get(inst, 3000.0)
+                        self.prices[inst] = init_price
+                        self.last_prices[inst] = init_price
                         self.volumes[inst] = 0
+                        # [NEW] Initialize momentum state for new instrument
+                        if inst not in self.momentum:
+                            self.momentum[inst] = 0.0
+                            self.trend_direction[inst] = random.choice([-1, 1])
+                            self.trend_duration[inst] = random.randint(20, 100)
+                            self.tick_counter[inst] = 0
                     tick = self.generate_tick(inst)
                     if tick is not None:
                         store.update_tick(inst, tick)
@@ -1342,6 +1779,8 @@ class MockEngine:
         threading.Thread(target=run, daemon=True).start()
 
     def stop(self):
+        if not self.running:
+            return
         self.running = False
         print("[Mock] 模拟行情引擎停止")
 
@@ -1486,6 +1925,8 @@ class CTPEngine:
             raise
 
     def stop(self):
+        if not self.running:
+            return
         if self.api:
             self.api.Release()
         self.running = False
@@ -1583,89 +2024,93 @@ manager = ConnectionManager()
 async def data_pusher():
     print("[Push] 数据推送启动")
     push_count = 0
-    while True:
-        await asyncio.sleep(1)
-        push_count += 1
-        if not manager.active_connections:
-            if push_count % 10 == 0:
-                print(f"[Push] 等待客户端... (总Tick:{store.tick_count})")
-            continue
-        try:
-            with store._lock:
-                main_inst = None
-                if store.selected_window < len(store.window_instruments):
-                    main_inst = store.window_instruments[store.selected_window]
-                window_config = store.get_window_config()
-                active_insts = list(store.active_instruments)
-                last_ticks_copy = dict(store.last_ticks)
-                orderflow = []
-                if main_inst and main_inst in store.active_instruments:
-                    orderflow = list(store.orderflow.get(main_inst, deque()))[-500:]
-                data_source = dsm.current
+    try:
+        while True:
+            await asyncio.sleep(1)
+            push_count += 1
+            if not manager.active_connections:
+                if push_count % 10 == 0:
+                    print(f"[Push] 等待客户端... (总Tick:{store.tick_count})")
+                continue
+            try:
+                with store._lock:
+                    main_inst = None
+                    if store.selected_window < len(store.window_instruments):
+                        main_inst = store.window_instruments[store.selected_window]
+                    window_config = store.get_window_config()
+                    active_insts = list(store.active_instruments)
+                    last_ticks_copy = dict(store.last_ticks)
+                    orderflow = []
+                    if main_inst and main_inst in store.active_instruments:
+                        orderflow = list(store.orderflow.get(main_inst, deque()))[-500:]
+                    data_source = dsm.current
 
-            of_count = len(orderflow)
-            of_time_range = ""
-            if orderflow and len(orderflow) > 0:
-                first_time = orderflow[0].get("time", "--")
-                last_time = orderflow[-1].get("time", "--")
-                of_time_range = first_time + " ~ " + last_time
+                of_count = len(orderflow)
+                of_time_range = ""
+                if orderflow and len(orderflow) > 0:
+                    first_time = orderflow[0].get("time", "--")
+                    last_time = orderflow[-1].get("time", "--")
+                    of_time_range = first_time + " ~ " + last_time
 
-            kline_update = {}
-            with store._lock:
-                all_window_insts = set(store.window_instruments)
-                all_window_insts.update(store.active_instruments)
-                for inst_key in all_window_insts:
-                    if not inst_key:
-                        continue
-                    kline_update[inst_key] = {}
-                    for period_name in PERIODS.keys():
-                        current = store.current_bar.get(inst_key, {}).get(period_name)
-                        if current:
-                            bar_data = dict(current)
-                            live_macd = store.get_live_macd(inst_key, period_name)
-                            if live_macd:
-                                bar_data["live_macd"] = live_macd
-                            kline_update[inst_key][period_name] = bar_data
+                kline_update = {}
+                with store._lock:
+                    all_window_insts = set(store.window_instruments)
+                    all_window_insts.update(store.active_instruments)
+                    for inst_key in all_window_insts:
+                        if not inst_key:
+                            continue
+                        kline_update[inst_key] = {}
+                        for period_name in PERIODS.keys():
+                            current = store.current_bar.get(inst_key, {}).get(period_name)
+                            if current:
+                                bar_data = dict(current)
+                                live_macd = store.get_live_macd(inst_key, period_name)
+                                if live_macd:
+                                    bar_data["live_macd"] = live_macd
+                                kline_update[inst_key][period_name] = bar_data
 
-            data = {
-                "type": "update",
-                "timestamp": int(time.time() * 1000),
-                "instruments": {},
-                "selected_orderflow": orderflow,
-                "selected_inst": main_inst,
-                "selected_name": INSTRUMENT_NAMES.get(main_inst, main_inst) if main_inst else "--",
-                "window_config": window_config,
-                "data_source": data_source,
-                "orderflow_stats": {
-                    "count": of_count,
-                    "time_range": of_time_range,
-                    "max_display": 150
-                },
-                "kline_update": kline_update,
-            }
+                data = {
+                    "type": "update",
+                    "timestamp": int(time.time() * 1000),
+                    "instruments": {},
+                    "selected_orderflow": orderflow,
+                    "selected_inst": main_inst,
+                    "selected_name": INSTRUMENT_NAMES.get(main_inst, main_inst) if main_inst else "--",
+                    "window_config": window_config,
+                    "data_source": data_source,
+                    "orderflow_stats": {
+                        "count": of_count,
+                        "time_range": of_time_range,
+                        "max_display": 150
+                    },
+                    "kline_update": kline_update,
+                }
 
-            for inst in active_insts:
-                tick = last_ticks_copy.get(inst)
-                if tick:
-                    data["instruments"][inst] = {
-                        "last_price": tick["price"],
-                        "volume": tick.get("volume_total", 0),
-                        "delta": tick["delta"],
-                        "spread": tick.get("spread", 0),
-                        "bid": tick.get("bid", 0),
-                        "ask": tick.get("ask", 0),
-                    }
+                for inst in active_insts:
+                    tick = last_ticks_copy.get(inst)
+                    if tick:
+                        data["instruments"][inst] = {
+                            "last_price": tick["price"],
+                            "volume": tick.get("volume_total", 0),
+                            "delta": tick["delta"],
+                            "spread": tick.get("spread", 0),
+                            "bid": tick.get("bid", 0),
+                            "ask": tick.get("ask", 0),
+                        }
 
-            inst_count = len(data["instruments"])
-            of_count = len(data["selected_orderflow"])
-            if push_count <= 5 or push_count % 10 == 0:
-                print(f"[Push] #{push_count} 推送 {inst_count}个品种 {of_count}笔订单流 Tick:{store.tick_count}")
+                inst_count = len(data["instruments"])
+                of_count = len(data["selected_orderflow"])
+                if push_count <= 5 or push_count % 10 == 0:
+                    print(f"[Push] #{push_count} 推送 {inst_count}个品种 {of_count}笔订单流 Tick:{store.tick_count}")
 
-            await manager.broadcast(data)
-        except Exception as e:
-            print(f"[Push] 推送异常 (push #{push_count}): {e}")
-            import traceback
-            traceback.print_exc()
+                await manager.broadcast(data)
+            except asyncio.CancelledError:
+                print("[Push] 数据推送任务已取消")
+                raise  # 重新抛出以便上层捕获
+    except Exception as e:
+        print(f"[Push] 推送异常 (push #{push_count}): {e}")
+        import traceback
+        traceback.print_exc()
 
 
 # ============ API 路由 ============
@@ -1695,8 +2140,7 @@ async def api_klines(inst: str = "rb2510", period: str = "1m"):
             result = store.set_window_instrument(0, inst)
             if result["success"]:
                 store.init_instrument_bars(inst)
-                store.active_instruments.add(inst)
-                store._access_time[inst] = time.time()
+                # set_window_instrument 已经设置了 _access_time 和 active_instruments
                 if inst not in engine.prices:
                     engine.prices[inst] = BASE_PRICES.get(inst, 3000.0)
                     engine.volumes[inst] = 0
