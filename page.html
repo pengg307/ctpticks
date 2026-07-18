@@ -1022,7 +1022,6 @@ function onDragHandleMouseUp(e) {
     document.removeEventListener('mouseup', onDragHandleMouseUp);
 }
 
-
 function updateChart(windowIdx, inst, period, data) {
     var chart = charts[windowIdx];
     if (!chart) return;
@@ -1090,7 +1089,9 @@ function updateChart(windowIdx, inst, period, data) {
         }
     }
 
+    // 【关键修复】存储 klines 到 chart 实例，供 tooltip 使用
     chart.__klines = klines.slice();
+    chart.__inst = inst;
 
     var option = {
         backgroundColor: 'transparent',
@@ -1104,9 +1105,11 @@ function updateChart(windowIdx, inst, period, data) {
             formatter: function(params) {
                 if (!params || params.length === 0) return '';
                 var idx = params[0].dataIndex;
-                var bar = klines[idx];
+                // 【关键修复】从 chart 实例读取数据，而不是闭包变量
+                var bar = chart.__klines && chart.__klines[idx];
                 if (!bar) return '';
-                var html = '<div style="font-size:11px;font-weight:bold;margin-bottom:4px;">' + bar.time + ' ' + inst + '</div>';
+                var instName = chart.__inst || inst;
+                var html = '<div style="font-size:11px;font-weight:bold;margin-bottom:4px;">' + bar.time + ' ' + instName + '</div>';
                 html += '<div>O: ' + bar.open + ' C: ' + bar.close + ' H: ' + bar.high + ' L: ' + bar.low + '</div>';
                 html += '<div>Vol: ' + bar.volume + ' Δ: ' + (bar.delta >= 0 ? '+' : '') + bar.delta + '</div>';
                 if (bar.vwap) html += '<div>VWAP: ' + bar.vwap.toFixed(2) + '</div>';
@@ -1296,7 +1299,6 @@ function updateChart(windowIdx, inst, period, data) {
 
     chart.setOption(option, true);
 }
-
 function getChartGrids(windowIdx) {
     var key = windowIdx + '_' + (windowPeriods[windowIdx] || '1m');
     var ratios = gridRatios[key] || DEFAULT_GRID_RATIOS.slice();
@@ -1895,10 +1897,9 @@ function updateKlineRealtime(klineUpdate) {
         var macdData = option.series[11] ? option.series[11].data || [] : [];
         var spreadData = option.series[12] ? option.series[12].data || [] : [];
 
-        // [FIX] Ensure chart.__klines exists and is properly initialized
+        // 确保 __klines 存在
         if (!chart.__klines) {
             chart.__klines = [];
-            // Initialize from existing option data if possible
             if (candleData.length > 0) {
                 for (var k = 0; k < candleData.length; k++) {
                     var cData = candleData[k];
@@ -1924,18 +1925,16 @@ function updateKlineRealtime(klineUpdate) {
         var klinesCache = chart.__klines;
         var liveMacd = bar.live_macd || null;
 
-        // [FIX] Update right panel signals for selected window from kline data
+        // 更新右侧面板信号
         if (i === selectedWindow) {
             var indKey = i + '_' + period;
             var ind = windowIndicators[indKey];
             if (ind && bar) {
-                // Update dashboard from current bar values + cached indicators
                 var vwapData2 = ind.vwap || [];
                 var cvdData2 = ind.cvd || [];
                 var noiZData2 = ind.noi_zscore || [];
                 var volZData2 = ind.volume_zscore || [];
 
-                // Build realtime indicators using bar data
                 var realtimeInd = {
                     vwap: bar.vwap !== undefined ? vwapData2.slice(-99).concat([bar.vwap]) : vwapData2,
                     cvd: bar.cvd !== undefined ? cvdData2.slice(-99).concat([bar.cvd]) : cvdData2,
@@ -1950,7 +1949,6 @@ function updateKlineRealtime(klineUpdate) {
                 };
                 updateSignalsFromIndicators(realtimeInd);
 
-                // Also update VWAP and CVD display
                 var vwapEl = document.getElementById('dash-vwap');
                 var cvdEl = document.getElementById('dash-cvd');
                 if (vwapEl && bar.vwap !== undefined) vwapEl.textContent = bar.vwap.toFixed(2);
@@ -1961,18 +1959,16 @@ function updateKlineRealtime(klineUpdate) {
             }
         }
 
-        // [FIX] Handle existing bar update (same timestamp)
+        // 处理现有 K 线更新（相同时间戳）
         if (lastDate === bar.time) {
             var lastIdx = candleData.length - 1;
             if (lastIdx < 0) {
-                // No data yet, treat as new bar
                 lastDate = null;
             } else {
                 candleData[lastIdx] = [bar.open, bar.close, bar.low, bar.high];
                 buyVolData[lastIdx] = { value: bar.buy_vol || 0, itemStyle: { color: '#00d4aa' } };
                 sellVolData[lastIdx] = { value: bar.sell_vol || 0, itemStyle: { color: '#ff4757' } };
 
-                // Update panels 3,4,5 (grids 2,3,4) for existing bar
                 if (vwapData.length > lastIdx && bar.vwap !== undefined && bar.vwap !== null) {
                     vwapData[lastIdx] = bar.vwap;
                 }
@@ -1982,7 +1978,7 @@ function updateKlineRealtime(klineUpdate) {
                 if (noiData.length > lastIdx && bar.noi !== undefined && bar.noi !== null) {
                     noiData[lastIdx] = bar.noi;
                 }
-                // Spread from bar's ask/bid
+
                 var barSpread = 0;
                 if (bar.ask && bar.bid) {
                     barSpread = Math.round((bar.ask - bar.bid) * 10000) / 10000;
@@ -2000,7 +1996,7 @@ function updateKlineRealtime(klineUpdate) {
                     };
                 }
 
-                // [FIX] Update panels 3,4,5 (grids 2,3,4) for existing bar [FIX] Update klinesCache for tooltip
+                // 【关键修复】更新 klinesCache
                 if (klinesCache.length > lastIdx) {
                     klinesCache[lastIdx] = {
                         time: bar.time,
@@ -2030,14 +2026,14 @@ function updateKlineRealtime(klineUpdate) {
             }
         }
 
-        // [FIX] Handle new bar (different timestamp)
+        // 处理新增 K 线
         if (lastDate !== bar.time) {
             dates.push(bar.time);
             candleData.push([bar.open, bar.close, bar.low, bar.high]);
             buyVolData.push({ value: bar.buy_vol || 0, itemStyle: { color: '#00d4aa' } });
             sellVolData.push({ value: bar.sell_vol || 0, itemStyle: { color: '#ff4757' } });
-            
-            // [FIX] Push to klinesCache for tooltip
+
+            // 【关键修复】向 klinesCache 添加新条目
             klinesCache.push({
                 time: bar.time,
                 open: bar.open,
@@ -2053,28 +2049,21 @@ function updateKlineRealtime(klineUpdate) {
                 noi: bar.noi || 0
             });
 
-            // Push VWAP
             vwapData.push(bar.vwap !== undefined && bar.vwap !== null ? bar.vwap : null);
 
-            // Push Vol Z-Score (carry forward last or null)
             var lastVolZ = volZData.length > 0 ? volZData[volZData.length - 1] : null;
             volZData.push(lastVolZ !== undefined && lastVolZ !== null ? lastVolZ : null);
 
-            // Push CVD
             cvdData.push(bar.cvd !== undefined && bar.cvd !== null ? bar.cvd : null);
 
-            // Push CVD Slope (carry forward last or null)
             var lastCvdSlope = cvdSlopeData.length > 0 ? cvdSlopeData[cvdSlopeData.length - 1] : null;
             cvdSlopeData.push(lastCvdSlope !== undefined && lastCvdSlope !== null ? lastCvdSlope : null);
 
-            // Push NOI
             noiData.push(bar.noi !== undefined && bar.noi !== null ? bar.noi : null);
 
-            // Push NOI Z-Score (carry forward last or null)
             var lastNoiZ = noiZData.length > 0 ? noiZData[noiZData.length - 1] : null;
             noiZData.push(lastNoiZ !== undefined && lastNoiZ !== null ? lastNoiZ : null);
 
-            // Push Spread (from bar's ask/bid or last known)
             var barSpread = 0;
             if (bar.ask && bar.bid) {
                 barSpread = Math.round((bar.ask - bar.bid) * 10000) / 10000;
@@ -2113,7 +2102,7 @@ function updateKlineRealtime(klineUpdate) {
                 }
             }
 
-            // Limit data points to prevent memory issues
+            // 限制数据点数量
             if (dates.length > 200) {
                 dates.shift();
                 candleData.shift();
@@ -2133,8 +2122,10 @@ function updateKlineRealtime(klineUpdate) {
             }
         }
 
-        // [FIX] Update chart with all data including updated tooltip cache
+        // 【关键修复】更新 chart 的 __klines 引用
         chart.__klines = klinesCache;
+
+        // 更新图表
         chart.setOption({
             xAxis: [
                 { data: dates }, { data: dates }, { data: dates },
@@ -2157,14 +2148,6 @@ function updateKlineRealtime(klineUpdate) {
                 { data: spreadData }
             ]
         });
-
-        // [FIX] Update the chart's __klines reference to match the tooltip data
-        // This ensures the tooltip formatter uses the updated data
-        var currentOption = chart.getOption();
-        if (currentOption && currentOption.series && currentOption.series.length > 0) {
-            // Store the klines in the chart instance for the tooltip formatter
-            chart.__klines = klinesCache;
-        }
     }
 }
 function switchSource() {
